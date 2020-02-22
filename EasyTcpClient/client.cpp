@@ -1,4 +1,5 @@
-﻿#define WIN32_LEAN_AND_MEAN			// 避免windows库和WinSock2库的宏重定义
+﻿#define _CRT_SECURE_NO_WARNINGS			// scanf安全性
+#define WIN32_LEAN_AND_MEAN			// 避免windows库和WinSock2库的宏重定义
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
 #include <windows.h>
@@ -35,14 +36,37 @@ int main() {
 	}
 	else {
 		printf("成功连接到服务器\n");
+		while (true) {
+			// 3. 输入请求
+			char request[128] = {};
+			printf("请输入请求: ");
+			
+			scanf("%s", request);
+
+			// 4. 使用 strcmp 处理请求
+			if (strcmp(request, "exit") == 0) {
+				break;
+			}
+
+			// 5. 向服务器发送请求
+			send(sockfd, request, strlen(request) + 1, 0);
+
+			// 6.recv 接收服务器数据
+#define BUF_SIZE 256
+			char recv_buf[BUF_SIZE] = {};
+			int size_recv = recv(sockfd, recv_buf, BUF_SIZE, 0);
+			if (size_recv > 0) {
+				printf("\tresponse：%s\n", recv_buf);
+			}
+			else {
+				printf("服务器端停止接收数据...\n");
+				break;
+			}
+		}		
 	}
-	// 3.send 向客户端发送数据
-	char msg_recv[256] = {};
-	int size_recv = recv(sockfd, msg_recv, sizeof(msg_recv), 0);
-	if (size_recv > 0) {
-		printf("接收到服务端的数据：%s\n", msg_recv);
-	}
-	// 4.关闭套接字 close
+	
+	// 7.关闭套接字 close
+	printf("正在退出...\n\n");
 	closesocket(sockfd);
 
 	// 清除windows socket环境
