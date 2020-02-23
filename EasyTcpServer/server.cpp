@@ -1,6 +1,38 @@
 ﻿#define WIN32_LEAN_AND_MEAN			// 避免windows库和WinSock2库的宏重定义
 #define _WINSOCK_DEPRECATED_NO_WARNINGS		// itoa太旧
 
+enum CMD {
+	_LOGIN,
+	_LOGOUT,
+	_ERROR
+};
+
+// 传输结构化数据格式
+struct DataHeader {
+	short _dataLength;
+	CMD _cmd;		// 命令
+};
+
+struct Login {
+	char _userName[32];
+	char _passwd[32];
+};
+
+struct LoginResult {
+	bool _result;
+};
+
+struct Logout {
+	char _userName[32];
+};
+
+struct LogoutResult {
+	bool _result;
+};
+
+struct Response {
+	bool _result;
+};
 
 #include <windows.h>
 #include <WinSock2.h>
@@ -57,38 +89,58 @@ int main() {
 				printf("新的客户端加入连接...\n\t cli_sockfd = %d && ip = %s.\n",
 					cli_sockfd, inet_ntoa(cli_addr.sin_addr));
 			}
-#ifndef Debug
+#ifdef Debug
 			printf("正在等待接收数据ing....\n");
 #endif
 			while (true) {
 				// 5.recv 接收客户端请求
+				DataHeader head = {};
 #define BUF_SIZE 128
-				char recv_buf[BUF_SIZE] = {};
-
-				int recv_len = recv(cli_sockfd, recv_buf, BUF_SIZE, 0);
-
+				// char recv_buf[BUF_SIZE] = {};
+				int recv_len = recv(cli_sockfd, reinterpret_cast<char*>(&head), sizeof(DataHeader), 0);
 				if (recv_len <= 0) {
 					printf("接收数据失败，客户端退出，任务结束\n");
 					break;
 				}
-				// 6.使用strcmp 处理客户端请求
-				int response = 0;
-				if (strcmp(recv_buf, "getName") == 0) {
-					response = 1;
+				else {
+					printf("包头信息：$cmd: %d, $lenght: %d\n", head._cmd, head._dataLength);
 				}
-				else if (strcmp(recv_buf, "getAge") == 0) {
-					response = 2;
-				}
-				// 7.给客户端 send 响应
-				const char* msg_buf[3] = { "What can I do for u？", "I'm Server.", "eighteen years old" };
-				send(cli_sockfd, msg_buf[response], strlen(msg_buf[response]) + 1, 0);
+
+				// 6.处理客户端请求，解析信息，并返回结果给客户端
+				Response response = {};		// 响应包
+				switch (head._cmd) {
+					case _LOGIN: {
+						// 登录
+						Login login = {};
+						recv(cli_sockfd, reinterpret_cast<char*>(&login), sizeof(Login), 0);
 #ifndef Debug
-				printf("接收到命令：%s \n\t", recv_buf);
-				printf("##response=%d ", response);
-				printf(" ##%s\n", msg_buf[response]);
+						printf("$%s, $%s已上线.\n", login._userName, login._passwd);
 #endif
-		}
-		
+						// here is 判断登录信息
+						response._result = true;
+					}	break;
+					case _LOGOUT: {
+						// 下线
+						Logout logout = {};
+						recv(cli_sockfd, reinterpret_cast<char*>(&logout), sizeof(Login), 0);
+#ifndef Debug
+						printf("$%s已下线.\n", logout._userName);
+#endif
+						// here is 确认退出下线
+						response._result = true;
+					}	break;
+					default: {
+						// error
+						const char* err = "error num of CMD!";
+						// 将结果返回给客户端
+						send(cli_sockfd, reinterpret_cast<const char*>(&head), sizeof(DataHeader), 0);
+						send(cli_sockfd, err, strlen(err), 0);
+					}	 break;
+				}
+				// 将结果返回给客户端
+				send(cli_sockfd, reinterpret_cast<const char*>(&head), sizeof(DataHeader), 0);
+				send(cli_sockfd, reinterpret_cast<const char*>(&response), sizeof(Response), 0);
+			}
 		}
 	}
 	
