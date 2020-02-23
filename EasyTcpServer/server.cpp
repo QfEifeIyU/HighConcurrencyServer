@@ -89,14 +89,9 @@ int main() {
 				printf("新的客户端加入连接...\n\t cli_sockfd = %d && ip = %s.\n",
 					cli_sockfd, inet_ntoa(cli_addr.sin_addr));
 			}
-#ifdef Debug
-			printf("正在等待接收数据ing....\n");
-#endif
 			while (true) {
-				// 5.recv 接收客户端请求
+				// 5.recv 接收客户端请求数据包
 				DataHeader head = {};
-#define BUF_SIZE 128
-				// char recv_buf[BUF_SIZE] = {};
 				int recv_len = recv(cli_sockfd, reinterpret_cast<char*>(&head), sizeof(DataHeader), 0);
 				if (recv_len <= 0) {
 					printf("接收数据失败，客户端退出，任务结束\n");
@@ -106,39 +101,39 @@ int main() {
 					printf("包头信息：$cmd: %d, $lenght: %d\n", head._cmd, head._dataLength);
 				}
 
-				// 6.处理客户端请求，解析信息，并返回结果给客户端
-				Response response = {};		// 响应包
+				// 6.处理客户端请求，解析信息
+				DataHeader response_head = {};		// 响应头
+				Response response = {};				// 响应体
 				switch (head._cmd) {
 					case _LOGIN: {
-						// 登录
+						// 登录->返回登录信息
+						response_head._dataLength = sizeof(LoginResult);
+						response_head._cmd = _LOGIN;
 						Login login = {};
 						recv(cli_sockfd, reinterpret_cast<char*>(&login), sizeof(Login), 0);
 #ifndef Debug
-						printf("$%s, $%s已上线.\n", login._userName, login._passwd);
+						printf("\t$%s, $%s已上线.\n", login._userName, login._passwd);
 #endif
 						// here is 判断登录信息
 						response._result = true;
 					}	break;
 					case _LOGOUT: {
-						// 下线
+						// 下线->返回下线信息
+						response_head._dataLength = sizeof(LogoutResult);
+						response_head._cmd = _LOGOUT;
 						Logout logout = {};
 						recv(cli_sockfd, reinterpret_cast<char*>(&logout), sizeof(Login), 0);
 #ifndef Debug
-						printf("$%s已下线.\n", logout._userName);
+						printf("\t$%s已下线.\n", logout._userName);
 #endif
 						// here is 确认退出下线
 						response._result = true;
 					}	break;
-					default: {
-						// error
-						const char* err = "error num of CMD!";
-						// 将结果返回给客户端
-						send(cli_sockfd, reinterpret_cast<const char*>(&head), sizeof(DataHeader), 0);
-						send(cli_sockfd, err, strlen(err), 0);
-					}	 break;
+					default: 
+						break;
 				}
 				// 将结果返回给客户端
-				send(cli_sockfd, reinterpret_cast<const char*>(&head), sizeof(DataHeader), 0);
+				send(cli_sockfd, reinterpret_cast<const char*>(&response_head), sizeof(DataHeader), 0);
 				send(cli_sockfd, reinterpret_cast<const char*>(&response), sizeof(Response), 0);
 			}
 		}
