@@ -77,7 +77,7 @@ int main() {
 			fflush(0);
 			scanf("%s", request);
 
-			// 4. 使用 strcmp 处理请求，并将数据包发送给服务器
+			// 4. send 向服务器发送请求包
 			if (strcmp(request, "login") == 0) {
 				DataHeader head = { sizeof(Login), _LOGIN };
 				Login login = {"lyb", "123456"};
@@ -99,12 +99,13 @@ int main() {
 					printf("error, 不支持的命令.\n");
 				break;
 			}
-			// 接收服务器的响应数据
+			// 5.recv 接收服务器的响应数据包
 			DataHeader response_head = {};
 			Response response = {};
 			recv(sockfd, reinterpret_cast<char*>(&response_head), sizeof(DataHeader), 0);
 			recv(sockfd, reinterpret_cast<char*>(&response), sizeof(Response), 0);
 #ifndef Debug
+			printf("包头信息：$cmd: %d, $lenght: %d\n", response_head._cmd, response_head._dataLength);
 			printf("\t ##log result: %d->", response._result);
 			if (response._result == true) {
 				printf("成功\n");
