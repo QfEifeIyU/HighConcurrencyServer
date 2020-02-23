@@ -4,6 +4,8 @@
 enum CMD {
 	_LOGIN,
 	_LOGOUT,
+	_LOGIN_RESULT,
+	_LOGOUT_RESULT,
 	_ERROR
 };
 
@@ -13,24 +15,47 @@ struct DataHeader {
 	CMD _cmd;		// 命令
 };
 
-struct Login {
+struct Login :public DataHeader{
+	Login()	{
+		this->_cmd = _LOGIN;
+		this->_dataLength = sizeof(Login);
+	}
 	char _userName[32];
 	char _passwd[32];
 };
 
-struct LoginResult {
+struct LoginResult :public DataHeader{
+	LoginResult() {
+		this->_cmd = _LOGIN_RESULT;
+		this->_dataLength = sizeof(LoginResult);
+		this->_result = false;
+	}
 	bool _result;
 };
 
-struct Logout {
+struct Logout :public DataHeader {
+	Logout() {
+		this->_cmd = _LOGOUT;
+		this->_dataLength = sizeof(Logout);
+	}
 	char _userName[32];
 };
 
-struct LogoutResult {
+struct LogoutResult :public DataHeader{
+	LogoutResult() {
+		this->_cmd = _LOGOUT_RESULT;
+		this->_dataLength = sizeof(LogoutResult);
+		this->_result = false;
+	}
 	bool _result;
 };
 
-struct Response {
+struct Response : public DataHeader{
+	Response() {
+		this->_cmd = _ERROR;
+		this->_dataLength = sizeof(Response);
+		this->_result = false;
+	}
 	bool _result;
 };
 
@@ -91,49 +116,50 @@ int main() {
 			}
 			while (true) {
 				// 5.recv 接收客户端请求数据包
-				DataHeader head = {};
-				int recv_len = recv(cli_sockfd, reinterpret_cast<char*>(&head), sizeof(DataHeader), 0);
+				DataHeader request_head = {};	// 接收请求头信息
+				int recv_len = recv(cli_sockfd, reinterpret_cast<char*>(&request_head), sizeof(DataHeader), 0);
 				if (recv_len <= 0) {
 					printf("接收数据失败，客户端退出，任务结束\n");
 					break;
 				}
-				else {
-					printf("包头信息：$cmd: %d, $lenght: %d\n", head._cmd, head._dataLength);
-				}
 
 				// 6.处理客户端请求，解析信息
-				DataHeader response_head = {};		// 响应头
-				Response response = {};				// 响应体
-				switch (head._cmd) {
+				Response response = {};				// 响应
+
+				switch (request_head._cmd) {
 					case _LOGIN: {
 						// 登录->返回登录信息
-						response_head._dataLength = sizeof(LoginResult);
-						response_head._cmd = _LOGIN;
-						Login login = {};
-						recv(cli_sockfd, reinterpret_cast<char*>(&login), sizeof(Login), 0);
+						Login login = {};	// 接收包体
+						recv(cli_sockfd, reinterpret_cast<char*>(&login) + sizeof(DataHeader), 
+							sizeof(Login) - sizeof(DataHeader), 0);
 #ifndef Debug
+						printf("包头信息：$cmd: %d, $lenght: %d\n", login._cmd, login._dataLength);
 						printf("\t$%s, $%s已上线.\n", login._userName, login._passwd);
 #endif
-						// here is 判断登录信息
+						// here is 判断登录信息，构造响应包
+						response._cmd = _LOGIN_RESULT;
 						response._result = true;
 					}	break;
 					case _LOGOUT: {
 						// 下线->返回下线信息
-						response_head._dataLength = sizeof(LogoutResult);
-						response_head._cmd = _LOGOUT;
-						Logout logout = {};
-						recv(cli_sockfd, reinterpret_cast<char*>(&logout), sizeof(Login), 0);
+						Logout logout = {};		// 接收包体
+						recv(cli_sockfd, reinterpret_cast<char*>(&logout) + sizeof(DataHeader), 
+							sizeof(Login) - sizeof(DataHeader), 0);
 #ifndef Debug
+						printf("包头信息：$cmd: %d, $lenght: %d\n", logout._cmd, logout._dataLength);
 						printf("\t$%s已下线.\n", logout._userName);
 #endif
-						// here is 确认退出下线
+						// here is 确认退出下线，构造响应包
+						response._cmd = _LOGOUT_RESULT;
 						response._result = true;
 					}	break;
-					default: 
+					default: {
+						response._cmd = _ERROR;
+						response._result = false;
+					}
 						break;
 				}
 				// 将结果返回给客户端
-				send(cli_sockfd, reinterpret_cast<const char*>(&response_head), sizeof(DataHeader), 0);
 				send(cli_sockfd, reinterpret_cast<const char*>(&response), sizeof(Response), 0);
 			}
 		}

@@ -5,6 +5,8 @@
 enum CMD {
 	_LOGIN,
 	_LOGOUT,
+	_LOGIN_RESULT,
+	_LOGOUT_RESULT,
 	_ERROR
 };
 
@@ -14,26 +16,50 @@ struct DataHeader {
 	CMD _cmd;		// 命令
 };
 
-struct Login {
+struct Login :public DataHeader {
+	Login() {
+		this->_cmd = _LOGIN;
+		this->_dataLength = sizeof(Login);
+	}
 	char _userName[32];
 	char _passwd[32];
 };
 
-struct LoginResult {
+struct LoginResult :public DataHeader {
+	LoginResult() {
+		this->_cmd = _LOGIN_RESULT;
+		this->_dataLength = sizeof(LoginResult);
+		this->_result = false;
+	}
 	bool _result;
 };
 
-struct Logout {
+struct Logout :public DataHeader {
+	Logout() {
+		this->_cmd = _LOGOUT;
+		this->_dataLength = sizeof(Logout);
+	}
 	char _userName[32];
 };
 
-struct LogoutResult {
+struct LogoutResult :public DataHeader {
+	LogoutResult() {
+		this->_cmd = _LOGOUT_RESULT;
+		this->_dataLength = sizeof(LogoutResult);
+		this->_result = false;
+	}
 	bool _result;
 };
 
-struct Response {
+struct Response : public DataHeader {
+	Response() {
+		this->_cmd = _ERROR;
+		this->_dataLength = sizeof(Response);
+		this->_result = false;
+	}
 	bool _result;
 };
+
 
 #include <windows.h>
 #include <WinSock2.h>
@@ -79,33 +105,29 @@ int main() {
 
 			// 4. send 向服务器发送请求包
 			if (strcmp(request, "login") == 0) {
-				DataHeader head = { sizeof(Login), _LOGIN };
-				Login login = {"lyb", "123456"};
-				// 发送包头+包体
-				send(sockfd, reinterpret_cast<const char*>(&head), sizeof(DataHeader), 0);
+				Login login;	
+				strcpy(login._userName, "lyb");
+				strcpy(login._passwd, "123456");
 				send(sockfd, reinterpret_cast<const char*>(&login), sizeof(Login), 0);
 			}
 			else if (strcmp(request, "logout") == 0) {
-				DataHeader head = { sizeof(Logout), _LOGOUT };
-				Logout logout = { "lyb" };
-				// 发送包头+包体
-				send(sockfd, reinterpret_cast<const char*>(&head), sizeof(DataHeader), 0);
+				Logout logout;
+				strcpy(logout._userName, "lyb");
 				send(sockfd, reinterpret_cast<const char*>(&logout), sizeof(Logout), 0);
 			}
-			else {
-				if (strcmp(request, "exit") == 0) 
-					printf("exit, 任务结束.\n");
-				else
-					printf("error, 不支持的命令.\n");
+			else if (strcmp(request, "exit") == 0) {
+				printf("exit, 任务结束.\n");	
 				break;
 			}
+			else {
+				printf("error, 错误的命令.\n");
+				continue;
+			}
 			// 5.recv 接收服务器的响应数据包
-			DataHeader response_head = {};
 			Response response = {};
-			recv(sockfd, reinterpret_cast<char*>(&response_head), sizeof(DataHeader), 0);
 			recv(sockfd, reinterpret_cast<char*>(&response), sizeof(Response), 0);
 #ifndef Debug
-			printf("包头信息：$cmd: %d, $lenght: %d\n", response_head._cmd, response_head._dataLength);
+			printf("包头信息：$cmd: %d, $lenght: %d\n", response._cmd, response._dataLength);
 			printf("\t ##log result: %d->", response._result);
 			if (response._result == true) {
 				printf("成功\n");
