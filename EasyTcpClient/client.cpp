@@ -2,11 +2,21 @@
 #define WIN32_LEAN_AND_MEAN			// 避免windows库和WinSock2库的宏重定义
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
+#include <windows.h>
+#include <WinSock2.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctime>		// 随机种子
+#include "windows.h"
+#include <iostream>
+//#pragma comment(lib, "ws2_32.lib")     // 常规->输入->附加依赖项中添加库名称
+
 enum CMD {
 	_LOGIN,
 	_LOGOUT,
 	_LOGIN_RESULT,
 	_LOGOUT_RESULT,
+	_NEWUSER_JOIN,
 	_ERROR
 };
 
@@ -60,20 +70,52 @@ struct Response : public DataHeader {
 	bool _result;
 };
 
-
-#include <windows.h>
-#include <WinSock2.h>
-#include <stdio.h>
-#include <stdlib.h>
-
+struct NewJoin :public DataHeader {
+	NewJoin() {
+		this->_cmd = _NEWUSER_JOIN;
+		this->_dataLength = sizeof(NewJoin);
+		this->_sockfd = INVALID_SOCKET;
+	}
+	SOCKET _sockfd;
+};
 #define PORT 4567
-
-
-//#pragma comment(lib, "ws2_32.lib")     // 常规->输入->附加依赖项中添加库名称
 using namespace std;
+
+bool Proc(SOCKET sockfd) {
+	// 5.recv 接收服务端响应包
+	Response response = {};
+	int recv_len = recv(sockfd, reinterpret_cast<char*>(&response), sizeof(Response), 0);
+	if (recv_len <= 0) {
+		return false;
+	}
+#ifndef Debug
+	printf("响应包头信息：$cmd: %d, $lenght: %d\n", response._cmd, response._dataLength);
+	switch (response._cmd) {
+	case _LOGIN_RESULT: {	printf("\tlogin->");	}	break;
+	case _LOGOUT_RESULT: {	printf("\tlogout->");	 }	break;
+	case _NEWUSER_JOIN: {	
+		NewJoin* broad = reinterpret_cast<NewJoin*>(&response);
+		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY | FOREGROUND_RED);
+		cout << "有新人到场" << broad->_sockfd << endl;
+		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY);
+	}	break;
+	default: {	printf("\terror->"); }	break;
+	}
+	if (response._result) {
+		printf("成功\n");
+	}
+	else {
+		printf("失败\n");
+	}
+#endif
+	return true;
+}
+
 
 int main() {
 	// 启动windows socket 2.x环境
+	
+
 	WORD ver = MAKEWORD(2, 2);
 	WSADATA data;
 	WSAStartup(ver, &data);
@@ -95,45 +137,49 @@ int main() {
 		printf("连接服务器失败\n");
 	}
 	else {
-		printf("成功连接到服务器\n");
+		printf("成功连接到服务器$%d.\n", sockfd);
 		while (true) {
-			// 3. 输入请求
-			char request[128] = {};
-			printf("请输入请求: ");
-			fflush(0);
-			scanf("%s", request);
-
-			// 4. send 向服务器发送请求包
-			if (strcmp(request, "login") == 0) {
-				Login login;	
+			// 对客户端加入select模型
+			// 3-1.将服务端套接字加入到监控集合中
+			fd_set reads;
+			FD_ZERO(&reads);
+			FD_SET(sockfd, &reads);
+			timeval timeout = { 1, 0 };
+			int ret = select(0, &reads, NULL, NULL, &timeout);	
+			if (ret < 0) {
+				printf("select出错.\n ###正在断开服务器...\n");
+			}
+			if (FD_ISSET(sockfd, &reads)) {
+				FD_CLR(sockfd, &reads);
+				if (Proc(sockfd) == false) {
+					printf("Proc导致通讯中断...\n");
+					break;
+				}
+			}
+			srand((unsigned int)time(0));
+			int num = rand() % 3;
+			
+			/*if (num == 0) {
+				Login login;
 				strcpy(login._userName, "lyb");
 				strcpy(login._passwd, "123456");
 				send(sockfd, reinterpret_cast<const char*>(&login), sizeof(Login), 0);
 			}
-			else if (strcmp(request, "logout") == 0) {
+			else if (num == 1) {
 				Logout logout;
 				strcpy(logout._userName, "lyb");
 				send(sockfd, reinterpret_cast<const char*>(&logout), sizeof(Logout), 0);
 			}
-			else if (strcmp(request, "exit") == 0) {
-				printf("exit, 任务结束.\n");	
-				break;
-			}
 			else {
-				printf("error, 错误的命令.\n");
-				continue;
-			}
-			// 5.recv 接收服务器的响应数据包
-			Response response = {};
-			recv(sockfd, reinterpret_cast<char*>(&response), sizeof(Response), 0);
-#ifndef Debug
-			printf("包头信息：$cmd: %d, $lenght: %d\n", response._cmd, response._dataLength);
-			printf("\t ##log result: %d->", response._result);
-			if (response._result == true) {
-				printf("成功\n");
-			}
-			else {
-				printf("失败\n");
+				DataHeader request_head = {};
+				request_head._cmd = _ERROR;
+				send(sockfd, reinterpret_cast<const char*>(&request_head), sizeof(DataHeader), 0);
+			}*/
+#ifdef Debug
+			{
+				Sleep(1000);
+				const char* arr[] = { "login", "logout", "request" };
+				printf("随机数%d\t--->发送-%s\n", num, arr[num]);
 			}
 #endif
 		}		
