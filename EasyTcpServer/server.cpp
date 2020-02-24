@@ -1,11 +1,19 @@
 ﻿#define WIN32_LEAN_AND_MEAN			// 避免windows库和WinSock2库的宏重定义
 #define _WINSOCK_DEPRECATED_NO_WARNINGS		// itoa太旧
 
+#include <windows.h>
+#include <WinSock2.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
+//#pragma comment(lib, "ws2_32.lib")     // 链接器->输入->附加依赖项中添加库名称
+
 enum CMD {
 	_LOGIN,
 	_LOGOUT,
 	_LOGIN_RESULT,
 	_LOGOUT_RESULT,
+	_NEWUSER_JOIN,
 	_ERROR
 };
 
@@ -15,8 +23,8 @@ struct DataHeader {
 	CMD _cmd;		// 命令
 };
 
-struct Login :public DataHeader{
-	Login()	{
+struct Login :public DataHeader {
+	Login() {
 		this->_cmd = _LOGIN;
 		this->_dataLength = sizeof(Login);
 	}
@@ -40,7 +48,7 @@ struct LoginResult :public DataHeader {
 	}
 	bool _result;
 };
-struct LogoutResult :public DataHeader{
+struct LogoutResult :public DataHeader {
 	LogoutResult() {
 		this->_cmd = _LOGOUT_RESULT;
 		this->_dataLength = sizeof(LogoutResult);
@@ -50,7 +58,7 @@ struct LogoutResult :public DataHeader{
 };
 #endif
 
-struct Response : public DataHeader{
+struct Response : public DataHeader {
 	Response() {
 		this->_cmd = _ERROR;
 		this->_dataLength = sizeof(Response);
@@ -59,18 +67,21 @@ struct Response : public DataHeader{
 	bool _result;
 };
 
-#include <windows.h>
-#include <WinSock2.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <vector>
-//#pragma comment(lib, "ws2_32.lib")     // 链接器->输入->附加依赖项中添加库名称
+struct NewJoin :public DataHeader {
+	NewJoin() {
+		this->_cmd = _NEWUSER_JOIN;
+		this->_dataLength = sizeof(NewJoin);
+		this->_sockfd = INVALID_SOCKET;
+	}
+	SOCKET _sockfd;
+};
+
+
 #define PORT 4567
 using namespace std;
 
 // 添加select模型
 vector<SOCKET> g_TalkWithCli_fds;
-
 
 bool Proc(SOCKET cli_sockfd) {
 	// 5.recv 接收客户端请求数据包
@@ -90,7 +101,7 @@ bool Proc(SOCKET cli_sockfd) {
 			recv(cli_sockfd, reinterpret_cast<char*>(&login) + sizeof(DataHeader),
 				sizeof(Login) - sizeof(DataHeader), 0);
 	#ifndef Debug
-			printf("包头信息：$cmd: %d, $lenght: %d\n", request_head._cmd, request_head._dataLength);
+			printf("$%d->请求包头信息：$cmd: %d, $lenght: %d\n", cli_sockfd, request_head._cmd, request_head._dataLength);
 			printf("\t$%s, $%s已上线.\n", login._userName, login._passwd);
 	#endif
 			// here is 判断登录信息，构造响应包
@@ -103,7 +114,7 @@ bool Proc(SOCKET cli_sockfd) {
 			recv(cli_sockfd, reinterpret_cast<char*>(&logout) + sizeof(DataHeader),
 				sizeof(Login) - sizeof(DataHeader), 0);
 #ifndef Debug
-			printf("包头信息：$cmd: %d, $lenght: %d\n", request_head._cmd, request_head._dataLength);
+			printf("$%d->请求包头信息：$cmd: %d, $lenght: %d\n", cli_sockfd, request_head._cmd, request_head._dataLength);
 			printf("\t$%s已下线.\n", logout._userName);
 #endif
 			// here is 确认退出下线，构造响应包
@@ -112,8 +123,8 @@ bool Proc(SOCKET cli_sockfd) {
 		}	break;
 		default: {
 #ifndef Debug
-			printf("包头信息：$cmd: %d, $lenght: %d\n", request_head._cmd, request_head._dataLength);
-			printf("\t$未定义的命令.\n");
+			printf("$%d->请求包头信息：$cmd: %d, $lenght: %d\n", cli_sockfd, request_head._cmd, request_head._dataLength);
+			printf("\t$命令解析失败.\n");
 #endif
 			response._cmd = _ERROR;
 			response._result = false;
@@ -171,13 +182,14 @@ int main() {
 				//FD_SET(g_cli_sockfds[i], &excepts);
 			}
 
-			timeval timeout = { 3, 0 };	// 最后一个参数表示在timeout=3s内，如果没有可用描述符到来，立即返回
+			timeval timeout = { 1, 0 };	// 最后一个参数表示在timeout=3s内，如果没有可用描述符到来，立即返回
 										// 为0表示阻塞在select，直到有可用描述符到来才返回
 			// 4-3.开始进行监控
 			int ret = select(0, &reads, &writes, &excepts, &timeout);
 			if (ret <= 0) {
 				if (ret == 0) {
-					printf("select 监控到当前无可用描述符就绪.\n");
+					printf("  select 监控到当前无可用描述符就绪.\n");
+					//here is to do 其余任务
 					continue;
 				}
 				else {
@@ -192,12 +204,19 @@ int main() {
 				sockaddr_in cli_addr = {};
 				int addr_len = sizeof(cli_addr);
 				SOCKET cli_sockfd = INVALID_SOCKET;
+				// 将通讯套接字与客户端地址绑定，使用通讯套接字与客户端通信
 				cli_sockfd = accept(sockfd, reinterpret_cast<sockaddr*>(&cli_addr), &addr_len);
 				if (cli_sockfd == INVALID_SOCKET) {
 					printf("接收到无效的客户端SOCKET\n");
 				}
 				else {
 					// 4-4-2.将新的通讯套接字添加到动态数组中
+					for (int i = 0; i < g_TalkWithCli_fds.size(); ++i) {
+						// 有新客户到来，将其广播给所有已连接的客户端.
+						NewJoin msg_borad;
+						msg_borad._sockfd = cli_sockfd;
+						send(g_TalkWithCli_fds[i], reinterpret_cast<const char*>(&msg_borad), sizeof(NewJoin), 0);
+					}
 					g_TalkWithCli_fds.push_back(cli_sockfd);
 					printf("新的客户端加入连接...\n\t 与其通讯的套接字cli_sockfd = %d && ip = %s.\n",
 						cli_sockfd, inet_ntoa(cli_addr.sin_addr));
