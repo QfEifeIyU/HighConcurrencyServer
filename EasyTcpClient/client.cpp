@@ -1,6 +1,9 @@
 ﻿#define _CRT_SECURE_NO_WARNINGS			// scanf安全性
 #define WIN32_LEAN_AND_MEAN			// 避免windows库和WinSock2库的宏重定义
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
+#define PORT 4567
+#define TIME_AWAKE 1
+
 
 #include <windows.h>
 #include <WinSock2.h>
@@ -12,12 +15,12 @@
 //#pragma comment(lib, "ws2_32.lib")     // 常规->输入->附加依赖项中添加库名称
 
 enum CMD {
-	_LOGIN,
+	_LOGIN = 1,
 	_LOGOUT,
-	_LOGIN_RESULT,
+	_LOGIN_RESULT = 10,
 	_LOGOUT_RESULT,
-	_NEWUSER_JOIN,
-	_ERROR
+	_NEWUSER_JOIN = 100,
+	_ERROR = 1000
 };
 
 // 传输结构化数据格式
@@ -78,7 +81,7 @@ struct NewJoin :public DataHeader {
 	}
 	SOCKET _sockfd;
 };
-#define PORT 4567
+
 using namespace std;
 
 bool Proc(SOCKET sockfd) {
@@ -91,15 +94,15 @@ bool Proc(SOCKET sockfd) {
 #ifndef Debug
 	printf("响应包头信息：$cmd: %d, $lenght: %d\n", response._cmd, response._dataLength);
 	switch (response._cmd) {
-	case _LOGIN_RESULT: {	printf("\tlogin->");	}	break;
-	case _LOGOUT_RESULT: {	printf("\tlogout->");	 }	break;
-	case _NEWUSER_JOIN: {	
-		NewJoin* broad = reinterpret_cast<NewJoin*>(&response);
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY | FOREGROUND_RED);
-		cout << "有新人到场" << broad->_sockfd << endl;
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY);
-	}	break;
-	default: {	printf("\terror->"); }	break;
+		case _LOGIN_RESULT: {	printf("\tlogin->");	}	break;
+		case _LOGOUT_RESULT: {	printf("\tlogout->");	 }	break;
+		case _NEWUSER_JOIN: {
+			NewJoin* broad = reinterpret_cast<NewJoin*>(&response);
+			SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY | FOREGROUND_RED);
+			cout << "\t有新人到场.->$" << broad->_sockfd;
+			SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_INTENSITY);
+		}	break;
+		default: {	printf("\terror->"); }	break;
 	}
 	if (response._result) {
 		printf("成功\n");
@@ -111,6 +114,31 @@ bool Proc(SOCKET sockfd) {
 	return true;
 }
 
+void ProcRequest(SOCKET sockfd) {
+	srand((unsigned int)time(0));
+	int num = rand() % 3;
+	if (num == 0) {
+		Login login;
+		strcpy(login._userName, "lyb");
+		strcpy(login._passwd, "123456");
+		send(sockfd, reinterpret_cast<const char*>(&login), sizeof(Login), 0);
+	}
+	else if (num == 1) {
+		Logout logout;
+		strcpy(logout._userName, "lyb");
+		send(sockfd, reinterpret_cast<const char*>(&logout), sizeof(Logout), 0);
+	}
+	else {
+		DataHeader request_head;
+		request_head._cmd = _ERROR;
+		request_head._dataLength = sizeof(DataHeader);
+		send(sockfd, reinterpret_cast<const char*>(&request_head), sizeof(DataHeader), 0);
+		return;
+	}
+#ifdef Debug
+	{	const char* arr[] = { "login", "logout", "request" }; printf("随机数%d\t--->发送-%s\n", num, arr[num]); }
+#endif
+}
 
 int main() {
 	// 启动windows socket 2.x环境
@@ -144,47 +172,30 @@ int main() {
 			fd_set reads;
 			FD_ZERO(&reads);
 			FD_SET(sockfd, &reads);
-			timeval timeout = { 1, 0 };
+			timeval timeout = { TIME_AWAKE, 0 };
 			int ret = select(0, &reads, NULL, NULL, &timeout);	
 			if (ret < 0) {
 				printf("select出错.\n ###正在断开服务器...\n");
 			}
-			if (FD_ISSET(sockfd, &reads)) {
-				FD_CLR(sockfd, &reads);
-				if (Proc(sockfd) == false) {
-					printf("Proc导致通讯中断...\n");
-					break;
-				}
-			}
-			srand((unsigned int)time(0));
-			int num = rand() % 3;
-			
-			/*if (num == 0) {
-				Login login;
-				strcpy(login._userName, "lyb");
-				strcpy(login._passwd, "123456");
-				send(sockfd, reinterpret_cast<const char*>(&login), sizeof(Login), 0);
-			}
-			else if (num == 1) {
-				Logout logout;
-				strcpy(logout._userName, "lyb");
-				send(sockfd, reinterpret_cast<const char*>(&logout), sizeof(Logout), 0);
-			}
-			else {
-				DataHeader request_head = {};
-				request_head._cmd = _ERROR;
-				send(sockfd, reinterpret_cast<const char*>(&request_head), sizeof(DataHeader), 0);
-			}*/
 #ifdef Debug
-			{
-				Sleep(1000);
-				const char* arr[] = { "login", "logout", "request" };
-				printf("随机数%d\t--->发送-%s\n", num, arr[num]);
+			else if (ret == 0) {
+				printf(" select 监测到无就绪的描述符.\n");
 			}
 #endif
+			else {
+				// 判断服务端套接字是否就绪
+				if (FD_ISSET(sockfd, &reads)) {
+					FD_CLR(sockfd, &reads);
+					if (Proc(sockfd) == false) {
+						printf("Proc导致通讯中断...\n");
+						break;
+					}
+				}
+				// 自动构造命令向服务端发送请求
+				ProcRequest(sockfd);
+			}
 		}		
 	}
-	
 	// 7.关闭套接字 close
 	printf("正在退出...\n\n");
 	closesocket(sockfd);

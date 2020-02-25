@@ -1,5 +1,8 @@
 ﻿#define WIN32_LEAN_AND_MEAN			// 避免windows库和WinSock2库的宏重定义
 #define _WINSOCK_DEPRECATED_NO_WARNINGS		// itoa太旧
+#define PORT 4567
+#define TIME_AWAKE 0
+
 
 #include <windows.h>
 #include <WinSock2.h>
@@ -9,12 +12,12 @@
 //#pragma comment(lib, "ws2_32.lib")     // 链接器->输入->附加依赖项中添加库名称
 
 enum CMD {
-	_LOGIN,
+	_LOGIN = 1,
 	_LOGOUT,
-	_LOGIN_RESULT,
+	_LOGIN_RESULT = 10,
 	_LOGOUT_RESULT,
-	_NEWUSER_JOIN,
-	_ERROR
+	_NEWUSER_JOIN = 100,
+	_ERROR = 1000
 };
 
 // 传输结构化数据格式
@@ -76,8 +79,6 @@ struct NewJoin :public DataHeader {
 	SOCKET _sockfd;
 };
 
-
-#define PORT 4567
 using namespace std;
 
 // 添加select模型
@@ -85,24 +86,30 @@ vector<SOCKET> g_TalkWithCli_fds;
 
 bool Proc(SOCKET cli_sockfd) {
 	// 5.recv 接收客户端请求数据包
+	char recv_buf[4096] = {};
+	int recv_len = recv(cli_sockfd, recv_buf, sizeof(recv_buf), 0);
+	if (recv_len <= 0) {
+		printf("接收数据失败，客户端退出，任务结束\n");
+		return false;
+	}
+#ifdef Debug
 	DataHeader request_head = {};	// 接收请求头信息
 	int recv_len = recv(cli_sockfd, reinterpret_cast<char*>(&request_head), sizeof(DataHeader), 0);
 	if (recv_len <= 0) {
 		printf("接收数据失败，客户端退出，任务结束\n");
 		return false;
 	}
-
+#endif
+	DataHeader* request_head = reinterpret_cast<DataHeader*>(recv_buf);
+	printf("$%d->请求包头信息：$cmd: %d, $lenght: %d", cli_sockfd, request_head->_cmd, request_head->_dataLength);
 	// 6.处理客户端请求，解析信息
 	Response response = {};				// 响应
-	switch (request_head._cmd) {
+	switch (request_head->_cmd) {
 		case _LOGIN: {
 			// 登录->返回登录信息
-			Login login = {};	// 接收包体
-			recv(cli_sockfd, reinterpret_cast<char*>(&login) + sizeof(DataHeader),
-				sizeof(Login) - sizeof(DataHeader), 0);
+			Login* login = reinterpret_cast<Login*>(recv_buf);	// 接收包体
 	#ifndef Debug
-			printf("$%d->请求包头信息：$cmd: %d, $lenght: %d\n", cli_sockfd, request_head._cmd, request_head._dataLength);
-			printf("\t$%s, $%s已上线.\n", login._userName, login._passwd);
+			printf("\t$%s, $%s已上线.\n", login->_userName, login->_passwd);
 	#endif
 			// here is 判断登录信息，构造响应包
 			response._cmd = _LOGIN_RESULT;
@@ -110,25 +117,22 @@ bool Proc(SOCKET cli_sockfd) {
 		}	break;
 		case _LOGOUT: {
 			// 下线->返回下线信息
-			Logout logout = {};		// 接收包体
-			recv(cli_sockfd, reinterpret_cast<char*>(&logout) + sizeof(DataHeader),
-				sizeof(Login) - sizeof(DataHeader), 0);
+			Logout* logout = reinterpret_cast<Logout*>(recv_buf);		// 接收包体
 #ifndef Debug
-			printf("$%d->请求包头信息：$cmd: %d, $lenght: %d\n", cli_sockfd, request_head._cmd, request_head._dataLength);
-			printf("\t$%s已下线.\n", logout._userName);
+			printf("\t$%s已下线.\n", logout->_userName);
 #endif
 			// here is 确认退出下线，构造响应包
 			response._cmd = _LOGOUT_RESULT;
 			response._result = true;
 		}	break;
-		default: {
+		case _ERROR: {
 #ifndef Debug
-			printf("$%d->请求包头信息：$cmd: %d, $lenght: %d\n", cli_sockfd, request_head._cmd, request_head._dataLength);
-			printf("\t$命令解析失败.\n");
-#endif
+			printf("\t$error, 接收到错误的命令\n");
 			response._cmd = _ERROR;
 			response._result = false;
-		}
+#endif
+		}	break;
+		default: 
 			break;
 	}
 	// 将结果返回给客户端
@@ -182,7 +186,7 @@ int main() {
 				//FD_SET(g_cli_sockfds[i], &excepts);
 			}
 
-			timeval timeout = { 1, 0 };	// 最后一个参数表示在timeout=3s内，如果没有可用描述符到来，立即返回
+			timeval timeout = { TIME_AWAKE, 0 };	// 最后一个参数表示在timeout=3s内，如果没有可用描述符到来，立即返回
 										// 为0表示阻塞在select，直到有可用描述符到来才返回
 			// 4-3.开始进行监控
 			int ret = select(0, &reads, &writes, &excepts, &timeout);
