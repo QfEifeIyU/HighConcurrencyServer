@@ -1,23 +1,38 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN			// 避免windows库和WinSock2库的宏重定义
-#define _WINSOCK_DEPRECATED_NO_WARNINGS			// itoa转换函数版本过低
-#define PORT 4567			// 服务端绑定端口号
+
+#define PORT 0x4567     // 服务端绑定端口号
 #define TIME_AWAKE 1		// select轮询时间
 //#pragma comment(lib, "ws2_32.lib")     // 链接器->输入->附加依赖项中添加库名称
 
-#include <windows.h>
-#include <WinSock2.h>
-#include <stdio.h>
+#ifdef _WIN32
+	#define WIN32_LEAN_AND_MEAN			// 避免windows库和WinSock2库的宏重定义
+	#define _WINSOCK_DEPRECATED_NO_WARNINGS			// itoa转换函数版本过低
+	#include <windows.h>
+	#include <WinSock2.h>
+	//#pragma comment(lib, "ws2_32.lib")     // 链接器->输入->附加依赖项中添加库名称
+#else
+	#include <unistd.h>     // std 
+	#include <arpa/inet.h>  // socket
+	#include <string.h>     // strcpy
+	typedef int SOCKET;     // 适应sockfd
+	const int INVALID_SOCKET = -1;
+	const int SOCKET_ERROR = -1;
+#endif 
+#include <stdio.h>          
 #include <stdlib.h>
+#include <iostream>
 
+// 服务端绑定私网地址、客户端链接公网地址
+const char* pub_ip = "106.15.187.148";
+const char* pri_ip = "172.19.119.190";
 enum CMD {
-	_LOGIN = 1,
-	_LOGOUT,
+	_LOGIN = 0,
+	_LOGOUT = 1,
 	_LOGIN_RESULT = 10,
-	_LOGOUT_RESULT,
+	_LOGOUT_RESULT = 11,
 	_NEWUSER_JOIN = 100,
-	_USER_QUIT = 200,
+	_USER_QUIT = 111,
 	_ERROR = 1000
 };
 
@@ -84,21 +99,25 @@ struct NewJoin :public DataHeader {
 	SOCKET _sockfd;
 };
 
-
+#ifdef _WIN32
 // 搭建windows socket 2.x环境
 void StartUp() {
 	WORD ver = MAKEWORD(2, 2);
 	WSADATA data;
 	WSAStartup(ver, &data);
 }
-
-// 设置地址信息
-void SetAddr(sockaddr_in* addr) {
-	addr->sin_family = AF_INET;
-	addr->sin_port = htons(PORT);
-	addr->sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
-}
-
 void CleanUp() {
 	WSACleanup();
+}
+#endif
+
+// 设置地址信息
+void SetAddr(sockaddr_in* addr, const char* ip) {
+	addr->sin_family = AF_INET;
+	addr->sin_port = htons(PORT);
+#ifdef _WIN32 
+	addr->sin_addr.S_un.S_addr = inet_addr(ip);
+#else
+	addr->sin_addr.s_addr = inet_addr(ip);
+#endif
 }
