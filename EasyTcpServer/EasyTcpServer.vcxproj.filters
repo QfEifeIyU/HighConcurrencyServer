@@ -20,7 +20,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Socket.h">
+    <ClInclude Include="Server.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
