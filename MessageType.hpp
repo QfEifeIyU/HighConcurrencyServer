@@ -17,6 +17,7 @@
 
 #define TIME_AWAKE 0		// select轮询时间
 //const unsigned short PORT = 0x4567;		// 服务端绑定端口号
+#include <stdio.h>  
 
 enum CMD 
 {
