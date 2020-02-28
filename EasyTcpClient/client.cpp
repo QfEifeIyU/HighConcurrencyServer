@@ -1,9 +1,9 @@
 ﻿#include "tcpClient.hpp"
-
+#include <thread>
 // 线程入口函数--构造请求
 void th_route(TcpClient* cli) 
 {
-	while (true) 
+	while (cli->IsRunning()) 
 	{
 		string request = "";
 		cin >> request;
@@ -26,7 +26,7 @@ void th_route(TcpClient* cli)
 			DataHeader request;
 			request._cmd = _USER_QUIT;
 			cli->SendData(&request);
-			cout << "线程 thread 退出\n";
+			printf("<%d>线程 thread 退出\n", cli->GetFd());
 			cli->CleanUp();
 			break;
 		}
@@ -41,13 +41,19 @@ void th_route(TcpClient* cli)
 int main() 
 {
 	TcpClient cli;
-	cli.Connect("106.15.187.148", 0x4567);
-	thread t(th_route, &cli);
-	t.detach();
+	cli.Connect("127.0.0.1", 0x4567);
+
+	Login login;
+	strcpy(login._userName, "lyb");
+	strcpy(login._passwd, "123456");
+
 	while (cli.IsRunning()) 
 	{
 		cli.StartSelect();
+		cli.SendData(&login);
 	}	
 	cli.CleanUp();
+
+	getchar();
 	return 0;
 }

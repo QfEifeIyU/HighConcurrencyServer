@@ -5,10 +5,8 @@
 #else
 	#include "MessageType.hpp"
 #endif	// _WIN32
-
-#include <stdio.h>          
+        
 #include <iostream>
-#include <thread>
 #include <string.h>
 
 using namespace std;
@@ -22,6 +20,10 @@ public:
 	{
 		CleanUp();
 	}
+	SOCKET GetFd() 
+	{
+		return _sockfd;
+	}
 	// 初始化Socket
 	void InitSocket()
 	{
@@ -31,7 +33,7 @@ public:
 #endif
 		if (_sockfd != INVALID_SOCKET)
 		{
-			printf("关闭旧的服务器<%d>连接.\n", _sockfd);
+			printf("<%d>关闭旧的服务器连接.\n", _sockfd);
 			CleanUp();
 		}
 		_sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -39,7 +41,7 @@ public:
 		{
 			printf("错误的SOCKET.\n");
 		}
-		printf("SOCKET创建成功.\n");
+		printf("SOCKET<%d>创建成功.\n", _sockfd);
 	}
 	// 连接服务器
 	void Connect(const char* ip, const unsigned short port)
@@ -60,9 +62,11 @@ public:
 			printf("连接服务器失败\n");
 			CleanUp();
 		}
-		printf("成功连接到服务器$%d...\n", _sockfd);
+		else 
+		{
+			printf("<%d>成功连接到服务器<$%s : %d>...\n", _sockfd, ip, port);
+		}
 	}
-
 	// 关闭Socket
 	void CleanUp()
 	{
@@ -70,13 +74,13 @@ public:
 			// 关闭windows socket 2.x环境
 #ifdef _WIN32 
 			closesocket(_sockfd);
-			Clean();
+			CleanNet();
 #else
 			close(_sockfd);
 #endif
 			_sockfd = INVALID_SOCKET;
+			printf("正在退出...\n\n");
 		}
-		printf("正在退出...\n\n");
 	}
 
 	// 开始监控工作
@@ -93,7 +97,8 @@ public:
 			int ret = select(static_cast<int>(_sockfd) + 1, &reads, NULL, NULL, &timeout);
 			if (ret < 0)
 			{
-				printf("OnSelect出错, 与服务器<%d>断开连接...\n", _sockfd);
+				printf("Select任务出错,<%d>与服务器断开连接...\n", _sockfd);
+				CleanUp();
 				return false;
 			}
 			else if (ret == 0)
@@ -121,7 +126,7 @@ public:
 		return _sockfd != INVALID_SOCKET;	
 	}
 
-	// 发送数据
+	// 发送请求包
 	bool SendData(DataHeader* request)
 	{
 		if (IsRunning() && request) 
@@ -131,26 +136,24 @@ public:
 		}
 		return false;
 	}
-
 	// 响应包接收->分包和拆包
 	bool RecvData() {
 		char recv_buf[4096] = {};
 		if (recv(_sockfd, recv_buf, sizeof(recv_buf), 0) <= 0)
 		{
+			CleanUp();
 			return false;
 		}
 		// 用DataHeader类型的响应头接收数据包，然后进行处理
 		DataHeader* response = reinterpret_cast<DataHeader*>(recv_buf);
+		printf("<%d>响应包头信息：$cmd: %d, $lenght: %d\n", _sockfd, response->_cmd, response->_dataLength);
 		MessageHandle(response);
 		return true;
 	}
 	// 响应包处理函数
-	void MessageHandle(DataHeader* response)
+	virtual void MessageHandle(DataHeader* response)
 	{
 		// 基类的指针可以通过强制类型转换赋值给派生类的指针。但是必须是基类的指针是指向派生类对象时才是安全的。
-#ifndef Debug
-		printf("响应包头信息：$cmd: %d, $lenght: %d\n", response->_cmd, response->_dataLength);
-#endif	
 		switch (response->_cmd)
 		{
 			case _LOGIN_RESULT:			// 登录返回
@@ -165,8 +168,10 @@ public:
 			}	break;
 			case _USER_QUIT:			// 退出
 			{	printf("\t收到quit指令\n");		}	break;
+			case _ERROR:
+			{	printf("\terror cmd\n"); }	break;
 			default:
-			{	printf("\terror cmd\n"); } break;
+				break;
 		}
 	}
 
