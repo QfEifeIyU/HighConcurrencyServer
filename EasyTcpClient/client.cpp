@@ -23,10 +23,7 @@ void th_route(TcpClient* cli)
 		}
 		else if (request == "exit") 
 		{
-			DataHeader request;
-			request._cmd = _USER_QUIT;
-			cli->SendData(&request);
-			printf("<%d>线程 thread 退出\n", cli->GetFd());
+			printf("<%d>线程 thread 退出\n", static_cast<int>(cli->GetFd()));
 			cli->CleanUp();
 			break;
 		}
@@ -41,7 +38,12 @@ void th_route(TcpClient* cli)
 int main() 
 {
 	TcpClient cli;
-	cli.Connect("127.0.0.1", 0x4567);
+#ifdef _WIN32
+	cli.Connect("127.0.0.1", 0x4567);	
+	//cli.Connect("106.15.187.148", 0x4567);
+#else
+	cli.Connect("106.15.187.148", 0x4567);
+#endif	
 
 	Login login;
 	strcpy(login._userName, "lyb");

@@ -33,7 +33,7 @@ public:
 #endif
 		if (_sockfd != INVALID_SOCKET)
 		{
-			printf("<%d>关闭旧的服务器连接.\n", _sockfd);
+			printf("<%d>关闭旧的服务器连接.\n", static_cast<int>(_sockfd));
 			CleanUp();
 		}
 		_sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -41,7 +41,7 @@ public:
 		{
 			printf("错误的SOCKET.\n");
 		}
-		printf("SOCKET<%d>创建成功.\n", _sockfd);
+		printf("SOCKET<%d>创建成功.\n", static_cast<int>(_sockfd));
 	}
 	// 连接服务器
 	void Connect(const char* ip, const unsigned short port)
@@ -64,7 +64,7 @@ public:
 		}
 		else 
 		{
-			printf("<%d>成功连接到服务器<$%s : %d>...\n", _sockfd, ip, port);
+			printf("<%d>成功连接到服务器<$%s : %d>...\n", static_cast<int>(_sockfd), ip, port);
 		}
 	}
 	// 关闭Socket
@@ -83,6 +83,7 @@ public:
 		}
 	}
 
+	int _count = 0;
 	// 开始监控工作
 	bool StartSelect()
 	{
@@ -95,9 +96,10 @@ public:
 			timeval timeout = { TIME_AWAKE, 0 };
 			// 2.监控
 			int ret = select(static_cast<int>(_sockfd) + 1, &reads, NULL, NULL, &timeout);
+			//printf("select ret = %d count = %d\n", ret, _count++);
 			if (ret < 0)
 			{
-				printf("Select任务出错,<%d>与服务器断开连接...\n", _sockfd);
+				printf("Select任务出错,<%d>与服务器断开连接...\n", static_cast<int>(_sockfd));
 				CleanUp();
 				return false;
 			}
@@ -113,6 +115,7 @@ public:
 				if (RecvData() == false)
 				{
 					printf("Proc导致通讯中断...\n");
+					CleanUp();
 					return false;
 				}
 			}
@@ -136,18 +139,57 @@ public:
 		}
 		return false;
 	}
+	
+	/*
+		使用双缓冲计数解决tcp粘包问题
+	*/
+#define RECVBUFSIZE 10240
+	char _recv_buf[RECVBUFSIZE] = {};
+	char _msg_buf[RECVBUFSIZE * 10] = {};
+	int _endofmsgbf = 0;
+
 	// 响应包接收->分包和拆包
-	bool RecvData() {
-		char recv_buf[4096] = {};
-		if (recv(_sockfd, recv_buf, sizeof(recv_buf), 0) <= 0)
+	bool RecvData() 
+	{
+		int recv_len = recv(_sockfd, _recv_buf, RECVBUFSIZE, 0);
+		if (recv_len <= 0)
 		{
-			CleanUp();
 			return false;
 		}
-		// 用DataHeader类型的响应头接收数据包，然后进行处理
-		DataHeader* response = reinterpret_cast<DataHeader*>(recv_buf);
-		printf("<%d>响应包头信息：$cmd: %d, $lenght: %d\n", _sockfd, response->_cmd, response->_dataLength);
-		MessageHandle(response);
+		// 将接收缓冲区的内容拷贝到消息缓冲区中
+		memcpy(_msg_buf + _endofmsgbf, _recv_buf, recv_len);
+		// 更新消息缓冲区的结尾位置
+		_endofmsgbf += recv_len;
+
+		while (_endofmsgbf >= sizeof(DataHeader))
+		{
+			// 如果消息缓冲区中有一个头部的大小，将消息缓冲区中响应包头部信息提取出来
+			DataHeader* response_head = reinterpret_cast<DataHeader*>(_msg_buf);
+			// 保存当前响应包的长度
+			int response_size = response_head->_dataLength;
+			if (_endofmsgbf >= response_size)
+			{
+				// 如果消息缓冲区中的数据大于请求包的长度，将消息缓冲区的响应包提取出来
+				// 消息缓冲区中保存剩余数据的长度
+				int left_size = _endofmsgbf - response_size;
+				// 对提取出来的数据进行处理
+				MessageHandle(response_head);
+				// 更新消息缓冲区
+				memcpy(_msg_buf, _msg_buf + response_size, left_size);
+				// 更新消息缓冲区中数据结尾位置
+				_endofmsgbf = left_size;
+				//printf("<$%d>响应包头信息：$cmd: %d, $lenght: %d\n", static_cast<int>(_sockfd), response_head->_cmd, response_head->_dataLength);
+			}
+			else 
+			{
+				printf("消息缓冲区数据不足一个完整包\n");
+				break;
+			}
+		}
+		//// 用DataHeader类型的响应头接收数据包，然后进行处理
+		//DataHeader* response = reinterpret_cast<DataHeader*>(_recv_buf);
+		////printf("<%d>响应包头信息：$cmd: %d, $lenght: %d", static_cast<int>(_sockfd), response->_cmd, response->_dataLength);
+		//MessageHandle(response);
 		return true;
 	}
 	// 响应包处理函数
@@ -157,20 +199,28 @@ public:
 		switch (response->_cmd)
 		{
 			case _LOGIN_RESULT:			// 登录返回
-			{	printf("\t收到login指令.\n");	}	break;
+			{
+				LoginResult* loginRet = reinterpret_cast<LoginResult*>(response);
+				//printf("\t收到login指令.\n");	
+			}	break;
 			case _LOGOUT_RESULT:		// 下线返回
-			{	printf("\t收到logout指令\n");	 }	break;
+			{	
+				LogoutResult* logoutRet = reinterpret_cast<LogoutResult*>(response);
+				//printf("\t收到logout指令\n");	 
+			}	break;
 			case _NEWUSER_JOIN:			// 新人到来
 			{
 				/************************************************/
 				NewJoin* broad = reinterpret_cast<NewJoin*>(response);
-				printf("\t有新人到场.->$%d\n", broad->_sockfd);
+				printf("\t有新人到场.->$%d\n", static_cast<int>(broad->_fd));
 			}	break;
-			case _USER_QUIT:			// 退出
-			{	printf("\t收到quit指令\n");		}	break;
 			case _ERROR:
-			{	printf("\terror cmd\n"); }	break;
+			{	
+				printf("\terror cmd\n"); 
+				printf("<$%d>响应包头信息：$cmd: error, $lenght: %d\n", static_cast<int>(_sockfd), response->_dataLength);
+			}	break;
 			default:
+				printf("\t<$%d>收到未定义指令\n", static_cast<int>(_sockfd));
 				break;
 		}
 	}
