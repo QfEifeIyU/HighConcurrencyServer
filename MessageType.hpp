@@ -16,6 +16,7 @@
 #endif 
 
 #define TIME_AWAKE 1	// select轮询时间
+#define RECVBUFSIZE 10240
 //const unsigned short PORT = 0x4567;		// 服务端绑定端口号
 #include <stdio.h>  
 
@@ -52,6 +53,7 @@ struct Login :public DataHeader
 	}
 	char _userName[32];
 	char _passwd[32];
+	char _data[928];
 };
 
 struct LoginResult :public DataHeader 
@@ -63,7 +65,7 @@ struct LoginResult :public DataHeader
 		this->_result = false;
 	}
 	bool _result;
-	char _data[1024];
+	char _data[990];
 };
 
 struct Logout :public DataHeader 
@@ -97,9 +99,9 @@ struct Response : public DataHeader
 		memset(_data, 0, 1024);
 	}
 	bool _result;
-	char _data[1024];
+	char _data[990];
 };
-
+int a = sizeof(LoginResult);
 struct NewJoin :public DataHeader 
 {
 	NewJoin() 
