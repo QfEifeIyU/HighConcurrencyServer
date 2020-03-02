@@ -15,15 +15,18 @@
 	#define SOCKET_ERROR            (-1)
 #endif 
 
-#define TIME_AWAKE 0		// select轮询时间
+#define TIME_AWAKE 1	// select轮询时间
 //const unsigned short PORT = 0x4567;		// 服务端绑定端口号
 #include <stdio.h>  
 
 enum CMD 
 {
-	_LOGIN = 0,		_LOGOUT = 1,
-	_LOGIN_RESULT = 10,		_LOGOUT_RESULT = 11,
-	_NEWUSER_JOIN = 100,	_USER_QUIT = 111,
+	_LOGIN,		
+	_LOGOUT,
+	_LOGIN_RESULT,		
+	_LOGOUT_RESULT,
+	_NEWUSER_JOIN,
+	_USER_QUIT,
 	_ERROR = 1000
 };
 
@@ -60,6 +63,7 @@ struct LoginResult :public DataHeader
 		this->_result = false;
 	}
 	bool _result;
+	char _data[1024];
 };
 
 struct Logout :public DataHeader 
@@ -90,8 +94,10 @@ struct Response : public DataHeader
 		this->_cmd = _ERROR;
 		this->_dataLength = sizeof(Response);
 		this->_result = false;
+		memset(_data, 0, 1024);
 	}
 	bool _result;
+	char _data[1024];
 };
 
 struct NewJoin :public DataHeader 
@@ -100,9 +106,9 @@ struct NewJoin :public DataHeader
 	{
 		this->_cmd = _NEWUSER_JOIN;
 		this->_dataLength = sizeof(NewJoin);
-		this->_sockfd = INVALID_SOCKET;
+		this->_fd = INVALID_SOCKET;
 	}
-	SOCKET _sockfd;
+	SOCKET _fd;
 };
 
 
