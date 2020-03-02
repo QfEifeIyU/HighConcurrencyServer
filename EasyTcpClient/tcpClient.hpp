@@ -141,9 +141,9 @@ public:
 	}
 	
 	/*
-		使用双缓冲计数解决tcp粘包问题
+		使用双缓冲解决tcp粘包问题
 	*/
-#define RECVBUFSIZE 10240
+
 	char _recv_buf[RECVBUFSIZE] = {};
 	char _msg_buf[RECVBUFSIZE * 10] = {};
 	int _endofmsgbf = 0;
@@ -165,7 +165,8 @@ public:
 		{
 			// 如果消息缓冲区中有一个头部的大小，将消息缓冲区中响应包头部信息提取出来
 			DataHeader* response_head = reinterpret_cast<DataHeader*>(_msg_buf);
-			// 保存当前响应包的长度
+			//printf("<$%d>响应包头信息：$cmd: %d, $lenght: %d\n", static_cast<int>(_sockfd), response_head->_cmd, response_head->_dataLength);
+			// 从提取出来的响应头信息获取当前响应包的长度
 			int response_size = response_head->_dataLength;
 			if (_endofmsgbf >= response_size)
 			{
@@ -178,7 +179,6 @@ public:
 				memcpy(_msg_buf, _msg_buf + response_size, left_size);
 				// 更新消息缓冲区中数据结尾位置
 				_endofmsgbf = left_size;
-				//printf("<$%d>响应包头信息：$cmd: %d, $lenght: %d\n", static_cast<int>(_sockfd), response_head->_cmd, response_head->_dataLength);
 			}
 			else 
 			{
@@ -186,10 +186,6 @@ public:
 				break;
 			}
 		}
-		//// 用DataHeader类型的响应头接收数据包，然后进行处理
-		//DataHeader* response = reinterpret_cast<DataHeader*>(_recv_buf);
-		////printf("<%d>响应包头信息：$cmd: %d, $lenght: %d", static_cast<int>(_sockfd), response->_cmd, response->_dataLength);
-		//MessageHandle(response);
 		return true;
 	}
 	// 响应包处理函数
@@ -220,7 +216,6 @@ public:
 				printf("<$%d>响应包头信息：$cmd: error, $lenght: %d\n", static_cast<int>(_sockfd), response->_dataLength);
 			}	break;
 			default:
-				printf("\t<$%d>收到未定义指令\n", static_cast<int>(_sockfd));
 				break;
 		}
 	}

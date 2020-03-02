@@ -1,60 +1,51 @@
 ﻿#include "tcpClient.hpp"
 #include <thread>
 // 线程入口函数--构造请求
-void th_route(TcpClient* cli) 
+static bool g_Cli_Running = true;
+void th_route() 
 {
-	while (cli->IsRunning()) 
+	string request = "";
+	cin >> request;
+	if (request == "exit") 
 	{
-		string request = "";
-		cin >> request;
-
-		if (request == "login") 
-		{
-			Login login;
-			strcpy(login._userName, "lyb");
-			strcpy(login._passwd, "123456");
-			cli->SendData(&login);	
-		}
-		else if (request == "logout") 
-		{
-			Logout logout;
-			strcpy(logout._userName, "lyb");
-			cli->SendData(&logout);
-		}
-		else if (request == "exit") 
-		{
-			printf("<%d>线程 thread 退出\n", static_cast<int>(cli->GetFd()));
-			cli->CleanUp();
-			break;
-		}
-		else 
-		{
-			DataHeader request;
-			cli->SendData(&request);
-		}
+		g_Cli_Running = false;
+		printf("线程 thread 退出\n");
+		return;
 	}
 }
 
 int main() 
 {
-	TcpClient cli;
+	const int cli_count = FD_SETSIZE - 1;
+	TcpClient* cli_arr[cli_count];
+	int a = sizeof(cli_arr);
+	for (auto& e: cli_arr) 
+	{
+		e = new TcpClient();
 #ifdef _WIN32
-	cli.Connect("127.0.0.1", 0x4567);	
-	//cli.Connect("106.15.187.148", 0x4567);
+		e->Connect("127.0.0.1", 0x4567);
+		//e.Connect("106.15.187.148", 0x4567);
 #else
-	cli.Connect("106.15.187.148", 0x4567);
+		e->Connect("106.15.187.148", 0x4567);
 #endif	
+	}
+	std::thread t(th_route);
+	t.detach();
 
 	Login login;
 	strcpy(login._userName, "lyb");
 	strcpy(login._passwd, "123456");
 
-	while (cli.IsRunning()) 
+	while (g_Cli_Running)
 	{
-		cli.StartSelect();
-		cli.SendData(&login);
+		for (auto e : cli_arr)
+		{
+			e->SendData(&login);
+			e->StartSelect();
+		}
 	}	
-	cli.CleanUp();
+	for (auto e: cli_arr)
+		e->CleanUp();
 
 	getchar();
 	return 0;
