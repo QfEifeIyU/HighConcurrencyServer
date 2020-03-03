@@ -128,7 +128,7 @@ public:
 #ifdef _WIN32
 		SOCKET cli_sockfd = accept(_sockfd, reinterpret_cast<sockaddr*>(&cli_addr), &addr_len);// accept获取客户端通信地址，返回一个通讯套接字与客户端通信
 #else
-		SOCKET cli_sockfd = accept(_sockfd, reinterpret_cast<sockaddr*>(&cli_addr), static_cast<socklen_t>(&addr_len));// accept获取客户端通信地址，返回一个通讯套接字与客户端通信
+		SOCKET cli_sockfd = accept(_sockfd, reinterpret_cast<sockaddr*>(&cli_addr), reinterpret_cast<socklen_t*>(&addr_len));// accept获取客户端通信地址，返回一个通讯套接字与客户端通信
 #endif		
 		if (cli_sockfd == INVALID_SOCKET)
 		{
@@ -158,7 +158,7 @@ public:
 			CleanNet();
 #else
 			for (int i = static_cast<int>(_cli_array.size()) - 1; i >= 0; --i) {
-				close(cli_array[i]->GetFd());
+				close(_cli_array[i]->GetFd());
 				delete _cli_array[i];
 			}
 			close(_sockfd);

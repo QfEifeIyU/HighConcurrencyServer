@@ -21,11 +21,12 @@ int main() {
 
 	TcpServer s;
 	//s.InitSocket();
-#ifdef _WIN32
-	s.Bind("127.0.0.1", 0x4567);
-#else
-	s.Bind("172.19.119.190", 0x4567);
-#endif
+
+	s.Bind("192.168.0.103", 0x4567);	// local
+	//s.Bind("127.0.0.1", 0x4567);	// local
+	//s.Bind("172.19.119.190", 0x4567);		// aliyun
+	//s.Bind("192.168.187.129", 0x4567);		// virtual Ubuntu
+
 	s.Listen(5);
 	std::thread t(th_route);
 	t.detach();
