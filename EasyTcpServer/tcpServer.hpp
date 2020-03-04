@@ -1,12 +1,15 @@
 ﻿#pragma once
+#include "higeResolutionTimer.hpp"
 #ifdef _WIN32 
 	#include "../HelloSocket/MessageType.hpp"
 #else
 	#include "MessageType.hpp"
+
 #endif
 
 #include <vector>
 #include <string.h>
+
 
 class Client
 {
@@ -84,7 +87,8 @@ public:
 			printf("错误的SOCKET.\n");
 			return;
 		}
-		printf("SOCKET创建成功.\n");
+		//printf("SOCKET创建成功.\n");
+		
 		// 解决Time_Wait问题
 #ifdef _WIN32
 		BOOL opt = TRUE;
@@ -108,7 +112,7 @@ public:
 			printf("绑定端口失败!\n");
 			return;
 		}
-		printf("绑定端口$%d成功...\n", port);
+		printf("<$ip：%s>绑定端口#%d...\n", ip, port);
 	}
 	// 监听
 	void Listen(int maxSize)
@@ -118,7 +122,7 @@ public:
 			printf("监听错误! \n");
 			return;
 		}
-		printf("服务器<$%d>已启动, 正在监听...\n", static_cast<int>(_sockfd));
+		//printf("服务器<$%d>已启动, 正在监听...\n", static_cast<int>(_sockfd));
 	}
 	// 接收客户端连接
 	SOCKET Accept()
@@ -135,12 +139,12 @@ public:
 			printf("接收到无效的客户端SOCKET\n");
 		}
 		else {
-			NewJoin Coming;
-			Coming._fd = cli_sockfd;
-			Broad(&Coming);
+			//NewJoin Coming;
+			//Coming._fd = cli_sockfd;
+			//Broad(&Coming);
 			_cli_array.push_back(new Client(cli_sockfd));	// 将新的通讯套接字添加到动态数组中
-			printf("新的客户端加入连接...\n\t 与其通讯的套接字 cli_sockfd = %d && ip = %s.\n",
-				static_cast<int>(cli_sockfd), inet_ntoa(cli_addr.sin_addr));
+			//printf("新的客户端<%d><ip = %s>加入连接...共计已连接<%d>.\n",\
+				static_cast<int>(cli_sockfd), inet_ntoa(cli_addr.sin_addr), static_cast<int>(_cli_array.size()));
 		}
 		return cli_sockfd;
 	}
@@ -167,7 +171,6 @@ public:
 			_sockfd = INVALID_SOCKET;
 			_cli_array.clear();
 		}
-
 	}
 
 	// 监控工作
@@ -187,12 +190,12 @@ public:
 				max_sockfd = _cli_array[i]->GetFd() > max_sockfd ? _cli_array[i]->GetFd() : max_sockfd;
 			}
 			timeval timeout = { TIME_AWAKE, 0 };	// 最后一个参数表示在timeout=3s内，如果没有可用描述符到来，立即返回
-										// 为0表示阻塞在select，直到有可用描述符到来才返回
+													// 为0表示阻塞在select，直到有可用描述符到来才返回
 			// 3.开始进行监控
 			int ret = select(static_cast<int>(max_sockfd) + 1, &reads, &writes, &excepts, &timeout);
 			if (ret < 0) {
-				printf("select出错，任务结束.\n");
-				CleanUp();
+				printf("select出错，重新启动监控.\n");
+				//CleanUp();
 				return false;
 			}
 			else if (ret == 0)
@@ -206,21 +209,19 @@ public:
 			{
 				FD_CLR(_sockfd, &reads);
 				Accept();	
+				return true;
 			}
 			// 5.判断监控集合中是否有剩余描述符
 			for (int i = 0; i < static_cast<int>(_cli_array.size()); ++i)
 			{
-				if (FD_ISSET(_cli_array[i]->GetFd(), &reads))
+				if (FD_ISSET(_cli_array[i]->GetFd(), &reads) && ! RecvData(_cli_array[i]))
 				{
-					if (RecvData(_cli_array[i]) == false)
+					auto iterator = _cli_array.begin() + i;
+					if (iterator != _cli_array.end())
 					{
-						auto iterator = _cli_array.begin() + i;
-						if (iterator != _cli_array.end())
-						{
-							delete (*iterator);
-							_cli_array.erase(iterator);
-						}
-					}
+						delete (*iterator);
+						_cli_array.erase(iterator);
+					}	
 				}
 			}
 			return true;
@@ -249,18 +250,13 @@ public:
 		for (auto e : _cli_array)
 			SendData(e->GetFd(), request);
 	}
-
-	/*
-		引用双缓冲解决粘包问题
-	*/
-	char _recv_buf[RECVBUFSIZE] = {};
 	// 接收请求包
 	bool RecvData(Client* cli) 
 	{
 		int recv_len = recv(cli->GetFd(), _recv_buf, RECVBUFSIZE, 0);
 		if (recv_len <= 0)
 		{
-			printf("<%d>退出直播间.\n", static_cast<int>(cli->GetFd()));
+			printf("<$%d>退出直播间.\n", static_cast<int>(cli->GetFd()));
 			return false;
 		}
 		// 将接收缓冲区的内容拷贝到消息缓冲区中
@@ -289,7 +285,6 @@ public:
 			}
 			else
 			{
-				printf("消息缓冲区数据不足一个完整包\n");
 				break;
 			}
 		}
@@ -298,6 +293,14 @@ public:
 	// 请求包处理函数
 	virtual void MessageHandle(SOCKET cli_fd, DataHeader* request)
 	{	
+		auto Second = _curTime.getSecond();
+		if (Second > 1.0 && fabs(Second - 1.0) >= 1e-6)
+		{
+			printf("<%lfs内> recvd cli{%ud} sum of recv package：[%d]\n", Second, _cli_array.size(), _recv_pack_count / Second);
+			_curTime.update();
+			_recv_pack_count = 0;
+		}
+		_recv_pack_count++;
 		switch (request->_cmd)
 		{
 			case _LOGIN:
@@ -305,24 +308,24 @@ public:
 				Login* login = reinterpret_cast<Login*>(request);
 				//printf("\t$%s, $%s已上线.\n", login->_userName, login->_passwd);
 				// here is 判断登录信息，构造响应包
-				LoginResult result;
-				result._result = true;
-				SendData(cli_fd, &result);
+				//LoginResult result;
+				//result._result = true;
+				//SendData(cli_fd, &result);
 			}	break;
 			case _LOGOUT:
 			{		// 注销->返回下线信息
 				Logout* logout = reinterpret_cast<Logout*>(request);
 				//printf("\t$%s已下线.\n", logout->_userName);
 				// here is 确认退出下线，构造响应包
-				LogoutResult result;
-				result._result = true;
-				SendData(cli_fd, &result);
+				//LogoutResult result;
+				//result._result = true;
+				//SendData(cli_fd, &result);
 			}	break;
 			default:
 			{		// 发送了错误的命令->返回错误头
-				printf("\t$error, 接收到错误的命令\n");
-				DataHeader result;
-				SendData(cli_fd, &result);
+				printf("\t$error, 接收到错误的命令@%d\n", request->_cmd);
+				//DataHeader result;
+				//SendData(cli_fd, &result);
 			}	break;
 		}
 	}
@@ -332,4 +335,12 @@ public:
 private:
 	SOCKET _sockfd;
 	std::vector<Client*> _cli_array;
+
+	/*引用双缓冲解决粘包问题*/
+	char _recv_buf[RECVBUFSIZE] = {};
+
+	/*引入高精度计数器*/
+	HigeResolutionTimer _curTime;
+	int _recv_pack_count;
+	
 };

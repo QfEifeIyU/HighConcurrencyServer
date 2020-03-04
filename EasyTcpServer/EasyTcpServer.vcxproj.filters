@@ -23,5 +23,8 @@
     <ClInclude Include="tcpServer.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="higeResolutionTimer.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

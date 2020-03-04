@@ -166,6 +166,7 @@
     <ClCompile Include="server.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="higeResolutionTimer.hpp" />
     <ClInclude Include="tcpServer.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
