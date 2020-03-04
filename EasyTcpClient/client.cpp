@@ -16,17 +16,20 @@ void th_route()
 
 int main() 
 {
-	const int cli_count = 10;
+	const int cli_count = 10000;
 	TcpClient* cli_arr[cli_count];
 	int a = sizeof(cli_arr);
 	for (auto& e: cli_arr) 
 	{
 		e = new TcpClient();
-		e->Connect("192.168.0.103", 0x4567);		// local
-		//e->Connect("127.0.0.1", 0x4567);		// local
+	}
+	for (auto e : cli_arr)
+	{
+		e->Connect("192.168.0.114", 0x4567);		// local
 		//e->Connect("106.15.187.148", 0x4567);		// aliyun
 		//e->Connect("192.168.187.129", 0x4567);		// virtual Ubuntu
 	}
+	printf("cli{%d}连接结束\n", cli_count);
 	std::thread t(th_route);
 	t.detach();
 
@@ -39,12 +42,13 @@ int main()
 		for (auto e : cli_arr)
 		{
 			e->SendData(&login);
-			e->StartSelect();
+			//e->StartSelect();
 		}
 	}	
 	for (auto e: cli_arr)
 		e->CleanUp();
 
 	getchar();
+	
 	return 0;
 }

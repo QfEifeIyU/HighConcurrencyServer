@@ -41,7 +41,7 @@ public:
 		{
 			printf("错误的SOCKET.\n");
 		}
-		printf("SOCKET<%d>创建成功.\n", static_cast<int>(_sockfd));
+		//printf("SOCKET<%d>创建成功.\n", static_cast<int>(_sockfd));
 	}
 	// 连接服务器
 	void Connect(const char* ip, const unsigned short port)
@@ -62,10 +62,7 @@ public:
 			printf("连接服务器失败\n");
 			CleanUp();
 		}
-		else 
-		{
-			printf("<%d>成功连接到服务器<$%s : %d>...\n", static_cast<int>(_sockfd), ip, port);
-		}
+		//printf("<$%d>成功连接到服务器<$%s : %d>...\n", static_cast<int>(_sockfd), ip, port);
 	}
 	// 关闭Socket
 	void CleanUp()
