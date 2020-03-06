@@ -1,7 +1,8 @@
 ﻿#include "tcpClient.hpp"
 #include <thread>
-// 线程入口函数--构造请求
+
 static bool g_Cli_Running = true;
+// 线程入口函数--构造请求
 void th_route() 
 {
 	string request = "";
@@ -14,41 +15,48 @@ void th_route()
 	}
 }
 
-int main() 
+const int cli_count = 4000;		// 客户端总数
+const int thr_count = 4;		// 根据cpu调整创建的线程数量
+Login login(1.0);
+void thr_SendMsg(int tid) 
 {
-	const int cli_count = 10000;
-	TcpClient* cli_arr[cli_count];
-	int a = sizeof(cli_arr);
-	for (auto& e: cli_arr) 
-	{
-		e = new TcpClient();
-	}
-	for (auto e : cli_arr)
-	{
-		e->Connect("192.168.0.114", 0x4567);		// local
-		//e->Connect("106.15.187.148", 0x4567);		// aliyun
-		//e->Connect("192.168.187.129", 0x4567);		// virtual Ubuntu
-	}
-	printf("cli{%d}连接结束\n", cli_count);
-	std::thread t(th_route);
-	t.detach();
+	const int num = cli_count / thr_count;	// 每个线程创建的客户端数量
+	TcpClient* cli_arr = new TcpClient[num]();		// new-> num个TcpClient对象数组
 
-	Login login;
-	strcpy(login._userName, "lyb");
-	strcpy(login._passwd, "123456");
+	for (int n = 0; n < num; ++n)
+	{
+		cli_arr[n].Connect("127.0.0.1", 0x4567);
+		printf("<thr%d> 连接 cli{%d}\n", tid, n);
+	}
+	printf("<thr%d> 连接结束.cli{%d}\n", tid, num);
 
 	while (g_Cli_Running)
 	{
-		for (auto e : cli_arr)
+		for (int n = 0; n < num; ++n)
 		{
-			e->SendData(&login);
-			//e->StartSelect();
+			cli_arr[n].SendData(&login);
 		}
-	}	
-	for (auto e: cli_arr)
-		e->CleanUp();
+	}
 
-	getchar();
-	
+	for (int n = 0; n < num; ++n)
+	{
+		cli_arr[n].CleanUp();
+	}
+	delete[] cli_arr;
+}
+
+
+int main() 
+{
+	thread thr_ui(th_route);
+	thr_ui.detach();
+
+	for (int n = 0; n < thr_count; ++n) 
+	{
+		// 开辟线程循环发送消息
+		thread thr_Send(thr_SendMsg, n + 1);
+		thr_Send.detach();
+	}
+	system("pause");
 	return 0;
 }

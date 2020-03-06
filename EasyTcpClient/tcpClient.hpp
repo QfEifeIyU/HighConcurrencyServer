@@ -1,11 +1,6 @@
 ﻿#pragma once
-#ifdef _WIN32
-	#define _CRT_SECURE_NO_WARNINGS			// scanf安全性
-	#include "../HelloSocket/MessageType.hpp"
-#else
-	#include "MessageType.hpp"
-#endif	// _WIN32
-        
+
+#include "MessageType.hpp" 
 #include <iostream>
 #include <string.h>
 
@@ -15,15 +10,17 @@ class TcpClient
 public:
 	TcpClient()
 		:_sockfd(INVALID_SOCKET)
-	{}
+	{
+		memset(_recv_buf, 0, sizeof(_recv_buf));
+		memset(_msg_buf, 0, sizeof(_msg_buf));
+		_endofmsgbf = 0;
+	}
 	virtual ~TcpClient()
 	{
 		CleanUp();
+		_sockfd = INVALID_SOCKET;
 	}
-	SOCKET GetFd() 
-	{
-		return _sockfd;
-	}
+
 	// 初始化Socket
 	void InitSocket()
 	{
@@ -80,7 +77,6 @@ public:
 		}
 	}
 
-	int _count = 0;
 	// 开始监控工作
 	bool StartSelect()
 	{
@@ -137,13 +133,6 @@ public:
 		return false;
 	}
 	
-	/*
-		使用双缓冲解决tcp粘包问题
-	*/
-
-	char _recv_buf[RECVBUFSIZE] = {};
-	char _msg_buf[RECVBUFSIZE * 10] = {};
-	int _endofmsgbf = 0;
 
 	// 响应包接收->分包和拆包
 	bool RecvData() 
@@ -153,28 +142,21 @@ public:
 		{
 			return false;
 		}
-		// 将接收缓冲区的内容拷贝到消息缓冲区中
+
 		memcpy(_msg_buf + _endofmsgbf, _recv_buf, recv_len);
-		// 更新消息缓冲区的结尾位置
 		_endofmsgbf += recv_len;
 
 		while (_endofmsgbf >= sizeof(DataHeader))
 		{
-			// 如果消息缓冲区中有一个头部的大小，将消息缓冲区中响应包头部信息提取出来
+			
 			DataHeader* response_head = reinterpret_cast<DataHeader*>(_msg_buf);
 			//printf("<$%d>响应包头信息：$cmd: %d, $lenght: %d\n", static_cast<int>(_sockfd), response_head->_cmd, response_head->_dataLength);
-			// 从提取出来的响应头信息获取当前响应包的长度
 			int response_size = response_head->_dataLength;
 			if (_endofmsgbf >= response_size)
 			{
-				// 如果消息缓冲区中的数据大于请求包的长度，将消息缓冲区的响应包提取出来
-				// 消息缓冲区中保存剩余数据的长度
 				int left_size = _endofmsgbf - response_size;
-				// 对提取出来的数据进行处理
 				MessageHandle(response_head);
-				// 更新消息缓冲区
 				memcpy(_msg_buf, _msg_buf + response_size, left_size);
-				// 更新消息缓冲区中数据结尾位置
 				_endofmsgbf = left_size;
 			}
 			else 
@@ -188,7 +170,6 @@ public:
 	// 响应包处理函数
 	virtual void MessageHandle(DataHeader* response)
 	{
-		// 基类的指针可以通过强制类型转换赋值给派生类的指针。但是必须是基类的指针是指向派生类对象时才是安全的。
 		switch (response->_cmd)
 		{
 			case _LOGIN_RESULT:			// 登录返回
@@ -220,4 +201,9 @@ public:
 
 private:
 	SOCKET _sockfd;
+	/*使用双缓冲解决tcp粘包问题*/
+	char _recv_buf[RECVBUFSIZE] = {};
+	char _msg_buf[RECVBUFSIZE * 10] = {};
+	int _endofmsgbf = 0;
+
 };	// end of class
