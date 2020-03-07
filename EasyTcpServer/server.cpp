@@ -19,20 +19,19 @@ void th_route()
 
 int main() {
 
-	TcpServer s;
-	//s.InitSocket();
+	TcpServer* s = new TcpServer();
+	s->Bind("127.0.0.1", 0x4567);
+	s->Listen(5);
+	s->CreateHandleMessageProcess();		// 创建线程微程序
 
-	s.Bind("192.168.0.114", 0x4567);	// local
-	//s.Bind("172.19.119.190", 0x4567);		// aliyun
-	//s.Bind("192.168.187.129", 0x4567);		// virtual Ubuntu
-
-	s.Listen(5);
-	std::thread t(th_route);
-	t.detach();
-	while (g_Ser_Running) {
-		s.StartSelect();
+	std::thread ui(th_route);
+	ui.detach();
+	
+	while (g_Ser_Running) 
+	{
+		s->StartSelect();
 	}
-	s.CleanUp();
-	getchar();
+	s->CleanUp();
+
 	return 0;
 }
