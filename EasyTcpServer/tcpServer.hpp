@@ -9,8 +9,8 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
-#include <functional>
-//#include <>
+#include <functional>		// mem_fun
+
 
 class Client
 {
@@ -60,14 +60,23 @@ private:
 };
 
 
+class NetInterface
+{
+public:
+	virtual void NetClientQuit(Client* pcli) = 0;
+private:
+};
+
+
 // 将接收请求和接收消息分离开
 // MessageHandler 用来处理客户端的消息
 class MessageHandler
 {
 public:
-	MessageHandler()
+	MessageHandler(NetInterface* net)
 	{
 		_pthread = nullptr;
+		_pInterface = net;		// net代表的是TcpServer
 		_recvPackages = 1;
 	}
 	~MessageHandler()
@@ -76,40 +85,6 @@ public:
 	}
 
 
-
-/*引用双缓冲解决粘包问题*/
-char _recv_buf[RECVBUFSIZE] = {};
-	// 接收请求包
-	bool RecvData(Client* cli) 
-	{
-		int recv_len = recv(cli->getFd(), _recv_buf, RECVBUFSIZE, 0);
-		if (recv_len <= 0)
-		{
-			printf("<$%d>退出直播间.\n", static_cast<int>(cli->getFd()));
-			return false;
-		}
-		memcpy(cli->MsgBuf() + cli->GetEndPos(), _recv_buf, recv_len);
-		cli->SetEndPos(cli->GetEndPos() + recv_len);
-		
-		while (cli->GetEndPos() >= sizeof(DataHeader))
-		{
-			DataHeader* request_head = reinterpret_cast<DataHeader*>(cli->MsgBuf());
-			//printf("<$%d>请求包头信息：$cmd: %d, $lenght: %d", static_cast<int>(cli_fd), request_head->_cmd, request_head->_datalength);
-			int request_size = request_head->_dataLength;
-			if (cli->GetEndPos() >= request_size)
-			{
-				int left_size = cli->GetEndPos() - request_size;	
-				MsgHandle(cli->getFd(), request_head);
-				memcpy(cli->MsgBuf(), cli->MsgBuf() + request_size, left_size);
-				cli->SetEndPos(left_size);
-			}
-			else
-			{
-				break;
-			}
-		}
-		return true;
-	}
 
 	// 请求包处理函数
 	virtual void MsgHandle(SOCKET cli_fd, DataHeader* request)
@@ -220,15 +195,51 @@ char _recv_buf[RECVBUFSIZE] = {};
 			{
 				if (FD_ISSET(_cli_Array[i]->getFd(), &reads) && !RecvData(_cli_Array[i]))
 				{
-					auto iterator = _cli_Array.begin() + i;
-					if (iterator != _cli_Array.end())
+					auto iter = _cli_Array.begin() + i;
+					if (iter != _cli_Array.end())
 					{
-						delete (*iterator);
-						_cli_Array.erase(iterator);
+						// 此时，_pInterface代表的是TcpServer
+						_pInterface->NetClientQuit(_cli_Array[i]);
+						delete (*iter);
+						_cli_Array.erase(iter);
 					}
 				}
 			}
 		}
+	}
+
+	/*引用双缓冲解决粘包问题*/
+	char _recv_buf[RECVBUFSIZE] = {};
+	// 接收请求包
+	bool RecvData(Client* cli)
+	{
+		int recv_len = recv(cli->getFd(), _recv_buf, RECVBUFSIZE, 0);
+		if (recv_len <= 0)
+		{
+			printf("<$%d>退出直播间.\n", static_cast<int>(cli->getFd()));
+			return false;
+		}
+		memcpy(cli->MsgBuf() + cli->GetEndPos(), _recv_buf, recv_len);
+		cli->SetEndPos(cli->GetEndPos() + recv_len);
+
+		while (cli->GetEndPos() >= sizeof(DataHeader))
+		{
+			DataHeader* request_head = reinterpret_cast<DataHeader*>(cli->MsgBuf());
+			//printf("<$%d>请求包头信息：$cmd: %d, $lenght: %d", static_cast<int>(cli_fd), request_head->_cmd, request_head->_datalength);
+			int request_size = request_head->_dataLength;
+			if (cli->GetEndPos() >= request_size)
+			{
+				int left_size = cli->GetEndPos() - request_size;
+				MsgHandle(cli->getFd(), request_head);
+				memcpy(cli->MsgBuf(), cli->MsgBuf() + request_size, left_size);
+				cli->SetEndPos(left_size);
+			}
+			else
+			{
+				break;
+			}
+		}
+		return true;
 	}
 
 	// 将新用户添加到缓冲队列中
@@ -239,12 +250,12 @@ char _recv_buf[RECVBUFSIZE] = {};
 		_cli_ArrayBuffer.push_back(pcli);
 	}
 
-
 	// 查询微程序的所有客户数量
 	size_t getClientCount()
 	{
 		return _cli_Array.size() + _cli_ArrayBuffer.size();
 	}
+
 
 private:
 	SOCKET _sockfd;
@@ -252,6 +263,7 @@ private:
 	std::vector<Client*> _cli_ArrayBuffer;
 	std::mutex _mutex;
 	std::thread* _pthread;
+	NetInterface* _pInterface;
 public:
 	std::atomic_int _recvPackages;
 };	// end of MessageHandler
@@ -259,7 +271,7 @@ public:
 
 
 
-class TcpServer
+class TcpServer : public NetInterface
 {
 public:
 	TcpServer()
@@ -332,9 +344,28 @@ public:
 	{
 		for (int n = 0; n < CPU_CREATE_THREAD; ++n)
 		{
-			auto proc = new MessageHandler();
+			/* 使用代理在线程内通知主线程有客户端退出*/
+			// 1.设计一个纯虚类NetInterface，和一个纯虚接口NetClientQuit
+			// 2.在主线程TcpServer类继承纯虚类，继承接口并定义NetClientQuit
+			// 3.在微服务类MessageHandler内添加一个NetInterface成员,并对其进行初始化
+			// 4.在需要的地方进行调用
+			auto proc = new MessageHandler(this);	//代理
 			_handlerProcs.push_back(proc);
 			proc->HandleProc();
+		}
+	}
+
+	// 继承离开接口
+	virtual void NetClientQuit(Client* pcli)
+	{
+		for (int n = 0; n < _cli_Array.size(); ++n)
+		{
+			if (_cli_Array[n] == pcli)
+			{
+				auto iter = _cli_Array.begin() + n;
+				if (iter != _cli_Array.end())
+					_cli_Array.erase(iter);
+			}
 		}
 	}
 
@@ -488,7 +519,8 @@ public:
 				//printf("主线程: packages=%d, 子线程：recvPackages=%d", packages, proc->_recvPackages);
 				proc->_recvPackages = 0;
 			}
-			printf("<%lfs内> recvd cli{%d} sum of recv package：[%d]\n", Timer, (int)_cli_Array.size(), (int)(packages / Timer));
+			printf("<$%lfs内> thr{#%d} recvd cli{#%d} sum of recv package：[#%.2lf]\n", 
+				Timer, (int)_handlerProcs.size(), (int)_cli_Array.size(), packages/Timer);
 			_Timer.update();
 		}		
 	}
