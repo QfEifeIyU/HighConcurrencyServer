@@ -1,10 +1,11 @@
-﻿#pragma once
+﻿#ifndef _EasyTcpClient_hpp_
+#define _EasyTcpClient_hpp_
 
-#include "MessageType.hpp" 
-#include <iostream>
+#include "../Socket/Tools.hpp"
+#include "../Socket/MessageType.hpp" 
 #include <string.h>
 
-using namespace std;
+
 class TcpClient
 {
 public:
@@ -14,6 +15,7 @@ public:
 		memset(_recv_buf, 0, sizeof(_recv_buf));
 		memset(_msg_buf, 0, sizeof(_msg_buf));
 		_endofmsgbf = 0;
+		_isConnect = false;
 	}
 	virtual ~TcpClient()
 	{
@@ -59,6 +61,7 @@ public:
 			printf("连接服务器失败\n");
 			CleanUp();
 		}
+		_isConnect = true;
 		//printf("<$%d>成功连接到服务器<$%s : %d>...\n", static_cast<int>(_sockfd), ip, port);
 	}
 	// 关闭Socket
@@ -73,12 +76,13 @@ public:
 			close(_sockfd);
 #endif
 			_sockfd = INVALID_SOCKET;
+			_isConnect = false;
 			printf("正在退出...\n\n");
 		}
 	}
 
-	// 开始监控工作
-	bool StartSelect()
+	// 开始监控工作--select
+	bool ActTask()
 	{
 		if (IsRunning())
 		{
@@ -86,10 +90,9 @@ public:
 			fd_set reads;
 			FD_ZERO(&reads);
 			FD_SET(_sockfd, &reads);
-			timeval timeout = { TIME_AWAKE, 0 };
 			// 2.监控
+			timeval timeout = { 0, 0 };
 			int ret = select(static_cast<int>(_sockfd) + 1, &reads, NULL, NULL, &timeout);
-			//printf("select ret = %d count = %d\n", ret, _count++);
 			if (ret < 0)
 			{
 				printf("Select任务出错,<%d>与服务器断开连接...\n", static_cast<int>(_sockfd));
@@ -105,7 +108,7 @@ public:
 			if (FD_ISSET(_sockfd, &reads))
 			{
 				FD_CLR(_sockfd, &reads);
-				if (RecvData() == false)
+				if (!RecvData(_sockfd))
 				{
 					printf("Proc导致通讯中断...\n");
 					CleanUp();
@@ -119,11 +122,11 @@ public:
 	// 套接字是否有效
 	bool IsRunning()
 	{
-		return _sockfd != INVALID_SOCKET;	
+		return _sockfd != INVALID_SOCKET && _isConnect;	
 	}
 
 	// 发送请求包
-	bool SendData(DataHeader* request)
+	bool SendData(DataHeader* request, int size)
 	{
 		if (IsRunning() && request) 
 		{
@@ -135,12 +138,12 @@ public:
 	
 
 	// 响应包接收->分包和拆包
-	bool RecvData() 
+	bool RecvData(SOCKET ser_fd) 
 	{
-		int recv_len = recv(_sockfd, _recv_buf, RECVBUFSIZE, 0);
+		int recv_len = recv(ser_fd, _recv_buf, RECVBUFSIZE, 0);
 		if (recv_len <= 0)
 		{
-			return false;
+			return false;	// 断开连接或未接收到消息
 		}
 
 		memcpy(_msg_buf + _endofmsgbf, _recv_buf, recv_len);
@@ -148,16 +151,14 @@ public:
 
 		while (_endofmsgbf >= sizeof(DataHeader))
 		{
-			
 			DataHeader* response_head = reinterpret_cast<DataHeader*>(_msg_buf);
-			//printf("<$%d>响应包头信息：$cmd: %d, $lenght: %d\n", static_cast<int>(_sockfd), response_head->_cmd, response_head->_dataLength);
 			int response_size = response_head->_dataLength;
 			if (_endofmsgbf >= response_size)
 			{
-				int left_size = _endofmsgbf - response_size;
+				int rest_data_size = _endofmsgbf - response_size;
 				MessageHandle(response_head);
-				memcpy(_msg_buf, _msg_buf + response_size, left_size);
-				_endofmsgbf = left_size;
+				memcpy(_msg_buf, _msg_buf + response_size, rest_data_size);
+				_endofmsgbf = rest_data_size;
 			}
 			else 
 			{
@@ -203,7 +204,11 @@ private:
 	SOCKET _sockfd;
 	/*使用双缓冲解决tcp粘包问题*/
 	char _recv_buf[RECVBUFSIZE] = {};
-	char _msg_buf[RECVBUFSIZE * 10] = {};
+	char _msg_buf[RECVBUFSIZE * 5] = {};
 	int _endofmsgbf = 0;
 
+	bool _isConnect;	// 连接状态
 };	// end of class
+
+
+#endif		/* end of tcpClient.hpp*/
