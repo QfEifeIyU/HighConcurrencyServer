@@ -1,17 +1,17 @@
-﻿#pragma once
+﻿#ifndef _EasyTcpServer_hpp_
+#define _EasyTcpServer_hpp_
+
+#include "../Socket/MessageType.hpp"
+#include "../Socket/Tools.hpp"
 #include "higeResolutionTimer.hpp"
-#include "MessageType.hpp"
 
 #include <vector>
-#include <string.h>
-
-
-#include <thread>
 #include <mutex>
 #include <atomic>
-#include <functional>		// mem_fun
+#include <functional>		// mem_fn可以转换指针和引用
 
 
+// server 管理客户端的数据类型
 class Client
 {
 public:
@@ -34,107 +34,105 @@ public:
 		}
 	}
 
-	SOCKET getFd()
+	// 获取当前客户端的socket fd
+	SOCKET GetFd()
 	{
 		return _cli_fd;
 	}
-
-	char* MsgBuf()
+	// 获取当前客户端的缓冲区
+	char* GetMsgBuf()
 	{
 		return _msg_buf;
 	}
-
+	// 获取缓冲区的结束位
 	int GetEndPos()
 	{
 		return _endofmsgbf;
 	}
-
+	// 设置缓冲区的结束位
 	void SetEndPos(int pos)
 	{
 		_endofmsgbf = pos;
 	}
+
+	// 发送响应包
+	bool SendData(DataHeader* response)
+	{
+		if (_cli_fd != INVALID_SOCKET)
+		{
+			send(_cli_fd, reinterpret_cast<const char*>(response), response->_dataLength, 0);
+			return true;
+		}
+		return false;
+	}
 private:
 	SOCKET _cli_fd;
-	char _msg_buf[RECVBUFSIZE * 10];
+	char _msg_buf[RECVBUFSIZE * 5];
 	int _endofmsgbf;
-};
+};		//end of class
 
 
-class NetInterface
+// 网络事件接口
+class NetEvent_Interface
 {
 public:
+	// 客户端加入
+	virtual void NetClientJoin(Client* pcli) = 0;
+
+	// 客户端推出
 	virtual void NetClientQuit(Client* pcli) = 0;
-private:
+	
+	// 消息处理事件
+	virtual void NetMessageHandle(Client* pcli, DataHeader* header) = 0;
 };
 
 
-// 将接收请求和接收消息分离开
-// MessageHandler 用来处理客户端的消息
-class MessageHandler
+/* 将接收请求和接收消息分离开->TcpServer + MsgHandlerProc */
+
+// MsgHandlerProc 用来处理客户端的消息
+class MsgHandlerProc
 {
 public:
-	MessageHandler(NetInterface* net)
+	MsgHandlerProc()
 	{
-		_pthread = nullptr;
-		_pInterface = net;		// net代表的是TcpServer
-		_recvPackages = 1;
-	}
-	~MessageHandler()
-	{
-		this->_cli_Array.clear();
+		_pEvent = nullptr;
 	}
 
-
-
-	// 请求包处理函数
-	virtual void MsgHandle(SOCKET cli_fd, DataHeader* request)
+	~MsgHandlerProc()
 	{
-		++_recvPackages;
-		switch (request->_cmd)
+		RealeaseCliArr();
+	}
+
+	void RealeaseCliArr() 
+	{
+		delete _pEvent;
+		if (_cli_Array.size() > 0)
 		{
-			case _LOGIN:
-			{		// 登录->返回登录信息
-				Login* login = reinterpret_cast<Login*>(request);
-				//printf("\t$%s, $%s已上线.\n", login->_userName, login->_passwd);
-				// here is 判断登录信息，构造响应包
-				//LoginResult result;
-				//result._result = true;
-				//SendData(cli_fd, &result);
-			}	break;
-			case _LOGOUT:
-			{		// 注销->返回下线信息
-				Logout* logout = reinterpret_cast<Logout*>(request);
-				//printf("\t$%s已下线.\n", logout->_userName);
-				// here is 确认退出下线，构造响应包
-				//LogoutResult result;
-				//result._result = true;
-				//SendData(cli_fd, &result);
-			}	break;
-			default:
-			{		// 发送了错误的命令->返回错误头
-				printf("\t$error, 接收到错误的命令@%d\n", request->_cmd);
-				//DataHeader result;
-				//SendData(cli_fd, &result);
-			}	break;
+#ifdef _WIN32 
+			for (int i = static_cast<int>(_cli_Array.size()) - 1; i >= 0; --i) {
+				closesocket(_cli_Array[i]->GetFd());
+				delete _cli_Array[i];
+			}
+#else
+			for (int i = static_cast<int>(_cli_Array.size()) - 1; i >= 0; --i) {
+				close(_cli_Array[i]->GetFd());
+				delete _cli_Array[i];
+			}
+#endif
+			_cli_Array.clear();
 		}
-		return;
 	}
 
-
-	// 微程序的消息处理启动函数
-	void HandleProc()
+	// 设置纯虚类成员变量，让net代理TcpServer，然后在有客户端离开时用pInterface调用NetClientQuit
+	void setEventObj(NetEvent_Interface* net)
 	{
-		// 利用线程启动select监控
-		// mem_fun()将函数转换为类成员函数
-		_pthread = new std::thread(std::mem_fun(&MessageHandler::thr_Handler_route), this);
-		_pthread->detach();
+		_pEvent = net;		// net代表的是TcpServer
 	}
 
-	// 监控工作--线程入口函数--recv Message
-	bool thr_Handler_route()
+	/*       -------处理网络消息线程入口函数---------      */
+	void Task_thr_route()
 	{
-		/*       ---------------------------------------      */
-		while (true)
+		while (g_TaskRuning)
 		{
 			// 1.将缓冲队列的全部新客户端，取出来放到正式队列中，清空缓冲队列
 			if (_cli_ArrayBuffer.size() > 0)
@@ -150,38 +148,29 @@ public:
 			// 2.正式队列中没有需要处理的客户端就跳过
 			if (_cli_Array.empty())
 			{
-				std::chrono::milliseconds time(1);
-				std::this_thread::sleep_for(time);	// 休眠一毫秒
+				std::chrono::milliseconds millSec(1);
+				std::this_thread::sleep_for(millSec);	// 休眠一毫秒
 				//printf("休眠一毫秒...\n");
 				continue;
 			}
 
-			fd_set reads, writes, excepts;
-
-			FD_ZERO(&reads);
-			FD_ZERO(&writes);
-			FD_ZERO(&excepts);
-
-			//FD_SET(_sockfd, &reads);		
-			//FD_SET(_sockfd, &writes);	
-			//FD_SET(_sockfd, &excepts);
-
 			// 3.监控准备动作---将正式队列中的套接字加入到监控集合中
-			SOCKET max_clifd = _cli_Array[0]->getFd();
+			fd_set reads;
+			FD_ZERO(&reads);
+			SOCKET max_clifd = _cli_Array[0]->GetFd();
 			for (int i = static_cast<int>(_cli_Array.size()) - 1; i >= 0; --i)
 			{
-				FD_SET(_cli_Array[i]->getFd(), &reads);
-				max_clifd = _cli_Array[i]->getFd() > max_clifd ? _cli_Array[i]->getFd() : max_clifd;
+				FD_SET(_cli_Array[i]->GetFd(), &reads);
+				max_clifd = _cli_Array[i]->GetFd() > max_clifd ? _cli_Array[i]->GetFd() : max_clifd;
 			}
-			// 最后一个参数表示在timeout=3s内，如果没有可用描述符到来，立即返回
-			// 为0表示阻塞在select，直到有可用描述符到来才返回
-			timeval timeout = { TIME_AWAKE, 0 };
-
+		
 			// 4.开始进行监控
-			int ret = select(static_cast<int>(max_clifd) + 1, &reads, &writes, &excepts, &timeout);
+			timeval timeout = { 0, 0 };
+			int ret = select(static_cast<int>(max_clifd) + 1, &reads, nullptr, nullptr, &timeout);
 			if (ret < 0) {
-				printf("select出错，重新启动监控.\n");
-				return false;
+				RealeaseCliArr();
+				//printf("select出错，重新启动监控.\n");
+				return;
 			}
 			else if (ret == 0)
 			{
@@ -191,16 +180,14 @@ public:
 			}
 
 			// 5.和正式队列中的就绪描述符进行通讯，如果通讯失败移出正式队列
-			for (int i = 0; i < static_cast<int>(_cli_Array.size()); ++i)
+			for (int n = 0; n < static_cast<int>(_cli_Array.size()); ++n)
 			{
-				if (FD_ISSET(_cli_Array[i]->getFd(), &reads) && !RecvData(_cli_Array[i]))
+				if (FD_ISSET(_cli_Array[n]->GetFd(), &reads) && !RecvData(_cli_Array[n]))
 				{
-					auto iter = _cli_Array.begin() + i;
+					auto iter = _cli_Array.begin() + n;
 					if (iter != _cli_Array.end())
 					{
-						// 此时，_pInterface代表的是TcpServer
-						_pInterface->NetClientQuit(_cli_Array[i]);
-						delete (*iter);
+						delete _cli_Array[n];
 						_cli_Array.erase(iter);
 					}
 				}
@@ -208,31 +195,41 @@ public:
 		}
 	}
 
+	// 消息处理启动函数
+	void HandleProc()
+	{
+		// 利用线程启动select监控
+		_pthread = std::thread(std::mem_fn(&MsgHandlerProc::Task_thr_route), this);		// mem_fun()将成员函数转换为函数对象
+		_pthread.detach();
+	}
+
 	/*引用双缓冲解决粘包问题*/
 	char _recv_buf[RECVBUFSIZE] = {};
 	// 接收请求包
-	bool RecvData(Client* cli)
+	bool RecvData(Client* pcli)
 	{
-		int recv_len = recv(cli->getFd(), _recv_buf, RECVBUFSIZE, 0);
+		int recv_len = recv(pcli->GetFd(), _recv_buf, RECVBUFSIZE, 0);
 		if (recv_len <= 0)
 		{
-			printf("<$%d>退出直播间.\n", static_cast<int>(cli->getFd()));
+			// 此时，_pEvent代表的是TcpServer
+			if (_pEvent)
+				_pEvent->NetClientQuit(pcli);
+			//printf("<$%d>退出直播间.\n", static_cast<int>(cli->GetFd()));
 			return false;
 		}
-		memcpy(cli->MsgBuf() + cli->GetEndPos(), _recv_buf, recv_len);
-		cli->SetEndPos(cli->GetEndPos() + recv_len);
+		memcpy(pcli->GetMsgBuf() + pcli->GetEndPos(), _recv_buf, recv_len);
+		pcli->SetEndPos(pcli->GetEndPos() + recv_len);
 
-		while (cli->GetEndPos() >= sizeof(DataHeader))
+		while (pcli->GetEndPos() >= sizeof(DataHeader))
 		{
-			DataHeader* request_head = reinterpret_cast<DataHeader*>(cli->MsgBuf());
-			//printf("<$%d>请求包头信息：$cmd: %d, $lenght: %d", static_cast<int>(cli_fd), request_head->_cmd, request_head->_datalength);
+			DataHeader* request_head = reinterpret_cast<DataHeader*>(pcli->GetMsgBuf());
 			int request_size = request_head->_dataLength;
-			if (cli->GetEndPos() >= request_size)
+			if (pcli->GetEndPos() >= request_size)
 			{
-				int left_size = cli->GetEndPos() - request_size;
-				MsgHandle(cli->getFd(), request_head);
-				memcpy(cli->MsgBuf(), cli->MsgBuf() + request_size, left_size);
-				cli->SetEndPos(left_size);
+				int left_size = pcli->GetEndPos() - request_size;
+				Handler(pcli, request_head);
+				memcpy(pcli->GetMsgBuf(), pcli->GetMsgBuf() + request_size, left_size);
+				pcli->SetEndPos(left_size);
 			}
 			else
 			{
@@ -242,40 +239,43 @@ public:
 		return true;
 	}
 
+	// 请求包处理函数
+	void Handler(Client* pcli, DataHeader* request)
+	{
+		_pEvent->NetMessageHandle(pcli, request);
+	}
+
 	// 将新用户添加到缓冲队列中
 	void AddClientToBuffer(Client* pcli)
 	{
-		// 利用RAII技术实现的自解锁
-		std::lock_guard<std::mutex> lock(_mutex);
+		std::lock_guard<std::mutex> lock(_mutex);	// 利用RAII技术实现的自解锁
 		_cli_ArrayBuffer.push_back(pcli);
 	}
 
-	// 查询微程序的所有客户数量
-	size_t getClientCount()
+	// 查询消息处理线程 MsgHandlerProc 的所有客户数量
+	size_t getClientAmount()
 	{
 		return _cli_Array.size() + _cli_ArrayBuffer.size();
 	}
 
 
 private:
-	SOCKET _sockfd;
-	std::vector<Client*> _cli_Array;
-	std::vector<Client*> _cli_ArrayBuffer;
-	std::mutex _mutex;
-	std::thread* _pthread;
-	NetInterface* _pInterface;
-public:
-	std::atomic_int _recvPackages;
-};	// end of MessageHandler
+	std::vector<Client*> _cli_Array;		// 正式队列
+	std::vector<Client*> _cli_ArrayBuffer;		// 缓冲队列
+
+	std::mutex _mutex;		
+	std::thread _pthread;
+	NetEvent_Interface* _pEvent;		// 网络事件对象--JOIN、QUIT、MsgHandler
+};	// #######################end of MsgHandlerProc
 
 
 
-
-class TcpServer : public NetInterface
+// TcpServer 用于接收客户端连接请求
+class TcpServer : public NetEvent_Interface
 {
 public:
 	TcpServer()
-		:_ser_fd(INVALID_SOCKET)
+		:_ser_fd(INVALID_SOCKET), _clientAmount(0), _recvAmount(0), _packageAmount(0)
 	{}
 
 	virtual ~TcpServer()
@@ -302,9 +302,8 @@ public:
 		}
 		//printf("SOCKET创建成功.\n");
 		
-		
-#ifdef _WIN32
-		// 解决Time_Wait问题
+
+#ifdef _WIN32	// 解决Time_Wait问题
 		BOOL opt = TRUE;
 		setsockopt(_ser_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(BOOL));
 #else
@@ -339,33 +338,22 @@ public:
 		//printf("服务器<$%d>已启动, 正在监听...\n", static_cast<int>(_sockfd));
 	}
 
-	// 创建消息处理微程序
-	void CreateHandleMessageProcess()
+	// 创建消息处理线程
+	void CreateHandleMessageProcess(int thrProcAmount)
 	{
-		for (int n = 0; n < CPU_CREATE_THREAD; ++n)
+		for (int n = 0; n < thrProcAmount; ++n)
 		{
 			/* 使用代理在线程内通知主线程有客户端退出*/
-			// 1.设计一个纯虚类NetInterface，和一个纯虚接口NetClientQuit
-			// 2.在主线程TcpServer类继承纯虚类，继承接口并定义NetClientQuit
-			// 3.在微服务类MessageHandler内添加一个NetInterface成员,并对其进行初始化
-			// 4.在需要的地方进行调用
-			auto proc = new MessageHandler(this);	//代理
-			_handlerProcs.push_back(proc);
+			// 1.设计一个纯虚类NetEventInterface -- ClientQuit、ClientJoin、NetMessageHandler
+			// 2.在主线程 TcpServer类继承纯虚类的抽象接口并定义
+			// 3.在消息处理线程 MsgHandlerProc 内添加一个pEvent成员,并对其进行设置初始化
+			// 4.在适当的地方触发事件，返回给 TcpServer
+			auto proc = new MsgHandlerProc();
+			_handlerProc_Array.push_back(proc);
+			// 注册网络事件对象
+			proc->setEventObj(this);	
+			// 启动消息处理线程
 			proc->HandleProc();
-		}
-	}
-
-	// 继承离开接口
-	virtual void NetClientQuit(Client* pcli)
-	{
-		for (int n = 0; n < _cli_Array.size(); ++n)
-		{
-			if (_cli_Array[n] == pcli)
-			{
-				auto iter = _cli_Array.begin() + n;
-				if (iter != _cli_Array.end())
-					_cli_Array.erase(iter);
-			}
 		}
 	}
 
@@ -375,42 +363,37 @@ public:
 		sockaddr_in cli_addr = {};
 		int addr_len = sizeof(sockaddr_in);
 #ifdef _WIN32
-		SOCKET cli_fd = accept(_ser_fd, reinterpret_cast<sockaddr*>(&cli_addr), &addr_len);// accept获取客户端通信地址，返回一个通讯套接字与客户端通信
+		SOCKET cli_fd = accept(_ser_fd, reinterpret_cast<sockaddr*>(&cli_addr), &addr_len);
 #else
-		SOCKET cli_fd = accept(_sockfd, reinterpret_cast<sockaddr*>(&cli_addr), reinterpret_cast<socklen_t*>(&addr_len));// accept获取客户端通信地址，返回一个通讯套接字与客户端通信
+		SOCKET cli_fd = accept(_sockfd, reinterpret_cast<sockaddr*>(&cli_addr), reinterpret_cast<socklen_t*>(&addr_len));
 #endif		
 		if (cli_fd == INVALID_SOCKET)
 		{
 			printf("接收到无效的客户端SOCKET\n");
 		}
 		else {
-			//NewJoin Coming;
-			//Coming._fd = cli_fd;
-			//Broad(&Coming);
-
 			/*将新客户端发送给微服务程序中消息队列最少的一个*/
-			AddClientToHandle_Buffer(new Client(cli_fd));
-			//printf("新的客户端<%d><ip = %s>加入连接...共计已连接<%d>.\n", static_cast<int>(cli_sockfd), inet_ntoa(cli_addr.sin_addr), static_cast<int>(_cli_Array.size()));
+			AddClientToHandlerProc(new Client(cli_fd));
+			// 客户端ip->inet_ntoa(cli_addr.sin_addr)
 		}
 		return cli_fd;
 	}
 
-	// 添加新客户连接到最少连接的微程序的缓冲队列中
-	void AddClientToHandle_Buffer(Client* pNewCli)
+	// 将新客户端分配给客户端最少的一个消息处理线程 
+	void AddClientToHandlerProc(Client* pNewCli)
 	{
-		_cli_Array.push_back(pNewCli);
-		
-		// 获取当前总客户端最少的微程序--MessageHandler
-		auto minCountProc = _handlerProcs[0];
-		for (auto proc : _handlerProcs)
+		// 获取当前总客户端最少的微程序--MsgHandlerProc
+		auto minCountProc = _handlerProc_Array[0];
+		for (auto proc : _handlerProc_Array)
 		{
-			if (proc->getClientCount() < minCountProc->getClientCount())
+			if (proc->getClientAmount() < minCountProc->getClientAmount())
 			{
 				minCountProc = proc;
 			}
 		}
 		// 将新客户加入到最少连接的微程序管理中
 		minCountProc->AddClientToBuffer(pNewCli);
+		NetClientJoin(pNewCli);
 	}
 
 	// 关闭windows socket 2.x环境
@@ -419,48 +402,34 @@ public:
 		if (_ser_fd != INVALID_SOCKET)
 		{
 #ifdef _WIN32 
-			for (int i = static_cast<int>(_cli_Array.size()) - 1; i >= 0; --i) {
-				closesocket(_cli_Array[i]->getFd());
-				delete _cli_Array[i];
-			}
 			closesocket(_ser_fd);
 			CleanNet();
 #else
-			for (int i = static_cast<int>(_cli_Array.size()) - 1; i >= 0; --i) {
-				close(_cli_Array[i]->getFd());
-				delete _cli_Array[i];
-			}
 			close(_sockfd);
 #endif
 			printf("服务器<$%d>即将关闭...\n\n", static_cast<int>(_ser_fd));
 			_ser_fd = INVALID_SOCKET;
-			_cli_Array.clear();
 		}
 	}
 
-	// 监控工作--仅处理请求
-	bool StartSelect()
+
+	/*       -------处理客户端请求线程函数---------      */
+	bool ActTask()
 	{
 		if (IsRunning())
 		{
 			CalcPackage();
 			// 1.将服务端套接字添加到描述符结合监控中
-			fd_set reads, writes, excepts;
+			fd_set reads;
 			FD_ZERO(&reads);	 
-			FD_ZERO(&writes);	
-			FD_ZERO(&excepts);
-			
 			FD_SET(_ser_fd, &reads);		
-			FD_SET(_ser_fd, &writes);	
-			FD_SET(_ser_fd, &excepts);
 			
-			// 2.将通讯套接字加入到监控集合中
+			// 2.计算select的最大描述符
 			SOCKET max_sockfd = _ser_fd;
-		
-			timeval timeout = { 0, 10 };	// 最后一个参数表示在timeout=3s内，如果没有可用描述符到来，立即返回
-													// 为0表示阻塞在select，直到有可用描述符到来才返回
+			
 			// 3.开始进行监控
-			int ret = select(static_cast<int>(max_sockfd) + 1, &reads, &writes, &excepts, &timeout);
+			timeval timeout = { 0, 10 };
+			int ret = select(static_cast<int>(max_sockfd) + 1, &reads, nullptr, nullptr, &timeout);
 			if (ret < 0) {
 				printf("select出错，重新启动监控.\n");
 				//CleanUp();
@@ -472,68 +441,80 @@ public:
 				//printf("  select 监控到当前无可用描述符就绪.\n");
 				return false;
 			}
+
 			// 4.判断服务端socket是否就绪
 			if (FD_ISSET(_ser_fd, &reads))
 			{
 				FD_CLR(_ser_fd, &reads);
-				Accept();	
-				return true;
+				Accept();
 			}
 			return true;
 		}
 		return false;
 	}
+
 	// 判断是否有效
 	bool IsRunning()
 	{
 		return _ser_fd != INVALID_SOCKET;
 	}
-
-	// 发送响应包
-	bool SendData(SOCKET cli_fd, DataHeader* response)
-	{
-		if (IsRunning() && cli_fd != INVALID_SOCKET)
-		{
-			send(cli_fd, reinterpret_cast<const char*>(response), response->_dataLength, 0);
-			return true;
-		}
-		return false;
-	}
-	// 新人到来广播
-	void Broad(DataHeader* request)
-	{
-		for (auto e : _cli_Array)
-			SendData(e->getFd(), request);
-	}
+	
+	// 数据广播
+	//void Broad(DataHeader* request)
+	//{
+	//	for (auto e : _cli_Array)
+	//		SendData(e->GetFd(), request);
+	//}
 
 	// 消息包计数函数
 	void CalcPackage()
 	{	
-		auto Timer = _Timer.getSecond();
-		if (Timer > 1.0 && fabs(Timer - 1.0) >= 1e-6)
+		auto Sec = _Timer.getSecond();
+		if (Sec >= 1.0)// && fabs(Sec - 1.0) >= 1e-6)
 		{
-			int packages = 0;
-			for (auto proc : _handlerProcs)
-			{
-				packages += proc->_recvPackages;
-				//printf("主线程: packages=%d, 子线程：recvPackages=%d", packages, proc->_recvPackages);
-				proc->_recvPackages = 0;
-			}
-			printf("<$%lfs内> thr{#%d} recvd cli{#%d} sum of recv package：[#%.2lf]\n", 
-				Timer, (int)_handlerProcs.size(), (int)_cli_Array.size(), packages/Timer);
+			printf("<$%lfs内> thread{#%d} recvd cli{#%d} recv packages：[#%.1lf]\n", 
+				Sec, (int)_handlerProc_Array.size(), (int)_clientAmount, (int)_packageAmount / Sec);
+			_packageAmount = 0;
 			_Timer.update();
 		}		
 	}
 	
 
 
+	// 客户端加入
+	virtual void NetClientJoin(Client* pcli)
+	{
+		_clientAmount++;
+	}
+
+	// 客户端退出
+	virtual void NetClientQuit(Client* pcli)
+	{
+		_clientAmount--;
+	}
+
+	// 消息处理事件
+	virtual void NetMessageHandle(Client* pcli, DataHeader* header)
+	{
+		++_packageAmount;
+	}
+
+
 private:
 	SOCKET _ser_fd;
-	std::vector<Client*> _cli_Array;
 
 	/*引入高精度计数器*/
 	HigeResolutionTimer _Timer;
 	/*引入微程序--线程消息处理数组*/
-	std::vector<MessageHandler*> _handlerProcs;
-	//MessageHandler _msgHandle;
+	std::vector<MsgHandlerProc*> _handlerProc_Array;
+
+protected:
+	// 收到消息计数
+	std::atomic_int _recvAmount;
+	// 客户端计数
+	std::atomic_int _clientAmount;
+	// 包计数
+	std::atomic_int _packageAmount;
 };
+
+#endif
