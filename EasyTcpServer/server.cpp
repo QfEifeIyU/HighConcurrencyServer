@@ -9,14 +9,19 @@ public:
 	virtual void NetClientJoin(Client* pcli)
 	{
 		++_clientAmount;
-		printf("cli<%d> JOIN.\n", pcli->GetFd());
+		//printf("cli<%d> JOIN.\n", pcli->GetFd());
 	}
 
 	// 客户端退出
 	virtual void NetClientQuit(Client* pcli)
 	{
 		--_clientAmount;
-		printf("cli<%d> QUIT.\n", pcli->GetFd());
+		//printf("cli<%d> QUIT.\n", pcli->GetFd());
+	}
+
+	virtual void NetRecv(Client* pcli)
+	{
+		//++_recvAmount;
 	}
 
 	// 消息处理事件
@@ -50,8 +55,6 @@ public:
 			}	break;
 		}
 	}
-private:
-
 };
 
 

@@ -9,6 +9,7 @@
 #include <mutex>
 #include <atomic>
 #include <functional>		// mem_fn可以转换指针和引用
+#include <map>
 
 
 // server 管理客户端的数据类型
@@ -25,11 +26,7 @@ public:
 	{
 		if (_cli_fd != INVALID_SOCKET)
 		{
-#ifdef _WIN32
-			closesocket(_cli_fd);
-#else
-			close(_cli_fd);
-#endif		
+			Close(_cli_fd);
 			_cli_fd = INVALID_SOCKET;
 		}
 	}
@@ -84,6 +81,8 @@ public:
 	
 	// 消息处理事件
 	virtual void NetMessageHandle(Client* pcli, DataHeader* header) = 0;
+
+	//virtual void NetRecv(Client* pcli) = 0;
 };
 
 
@@ -108,17 +107,11 @@ public:
 		delete _pEvent;
 		if (_cli_Array.size() > 0)
 		{
-#ifdef _WIN32 
-			for (int i = static_cast<int>(_cli_Array.size()) - 1; i >= 0; --i) {
-				closesocket(_cli_Array[i]->GetFd());
-				delete _cli_Array[i];
+			for (auto iter : _cli_Array)
+			{
+				Close(iter.second->GetFd());
+				delete iter.second;
 			}
-#else
-			for (int i = static_cast<int>(_cli_Array.size()) - 1; i >= 0; --i) {
-				close(_cli_Array[i]->GetFd());
-				delete _cli_Array[i];
-			}
-#endif
 			_cli_Array.clear();
 		}
 	}
@@ -130,17 +123,28 @@ public:
 	}
 
 	/*       -------处理网络消息线程入口函数---------      */
+	fd_set _reads;
+	SOCKET _maxSockfd;
+
 	void Task_thr_route()
 	{
+		FD_ZERO(&_reads);
+
 		while (g_TaskRuning)
 		{
-			// 1.将缓冲队列的全部新客户端，取出来放到正式队列中，清空缓冲队列
+			// 1.将缓冲队列的全部新客户端，取出来放到正式队列和set集合中，更新maxfd，清空缓冲队列
 			if (_cli_ArrayBuffer.size() > 0)
 			{
 				std::lock_guard<std::mutex> lock(_mutex);
 				for (auto newCli : _cli_ArrayBuffer)
 				{
-					_cli_Array.push_back(newCli);
+					_cli_Array[newCli->GetFd()] = newCli;
+					//_cli_Array.push_back(newCli);
+					FD_SET(newCli->GetFd(), &_reads);	
+					if (_maxSockfd != INVALID_SOCKET)
+					{
+						_maxSockfd = newCli->GetFd() > _maxSockfd ? newCli->GetFd() : _maxSockfd;
+					}
 				}
 				_cli_ArrayBuffer.clear();
 			}
@@ -154,22 +158,16 @@ public:
 				continue;
 			}
 
-			// 3.监控准备动作---将正式队列中的套接字加入到监控集合中
-			fd_set reads;
-			FD_ZERO(&reads);
-			SOCKET max_clifd = _cli_Array[0]->GetFd();
-			for (int i = static_cast<int>(_cli_Array.size()) - 1; i >= 0; --i)
-			{
-				FD_SET(_cli_Array[i]->GetFd(), &reads);
-				max_clifd = _cli_Array[i]->GetFd() > max_clifd ? _cli_Array[i]->GetFd() : max_clifd;
-			}
+			// 3.进行监控工作：select会改变监控集合，因此不能用全局的fd_set
+			fd_set bak;
+			memcpy(&bak, &_reads, sizeof(fd_set));
 		
-			// 4.开始进行监控
+			// 4.开始进行监控，select 调用后 bak 内为就绪的描述符
 			timeval timeout = { 0, 0 };
-			int ret = select(static_cast<int>(max_clifd) + 1, &reads, nullptr, nullptr, &timeout);
+			int ret = select(static_cast<int>(_maxSockfd) + 1, &bak, nullptr, nullptr, &timeout);
 			if (ret < 0) {
 				RealeaseCliArr();
-				//printf("select出错，重新启动监控.\n");
+				printf("MessageHandlerProc 出错，重新启动监控.\n");
 				return;
 			}
 			else if (ret == 0)
@@ -179,19 +177,43 @@ public:
 				continue;
 			}
 
-			// 5.和正式队列中的就绪描述符进行通讯，如果通讯失败移出正式队列
-			for (int n = 0; n < static_cast<int>(_cli_Array.size()); ++n)
+			// 5.使用 bak 内的就绪描述符通讯
+#ifdef _WIN32		/* windows中就绪的描述符放在 bak.fd_array 中 */
+			for (int n = 0; n < static_cast<int>(bak.fd_count); ++n)
 			{
-				if (FD_ISSET(_cli_Array[n]->GetFd(), &reads) && !RecvData(_cli_Array[n]))
+				SOCKET fd = bak.fd_array[n];		// cli表示就绪的套接字
+				auto it = _cli_Array.find(fd);
+				
+				if (!RecvData(it->second))
 				{
-					auto iter = _cli_Array.begin() + n;
-					if (iter != _cli_Array.end())
+					// 通讯失败，表示有客户端离开，在全局的set中取出
+					FD_CLR(fd, &_reads);
+					Close(fd);
+					delete it->second;
+					_cli_Array.erase(it);
+				}			
+			}
+#else			/* 其他平台 */
+			std::vector<Client*> dropCliArr;
+			for (auto it : _cli_Array)
+			{
+				Client* pcli = it.second;
+				if (FD_ISSET(pcli->GetFd(), &bak))
+				{
+					if (!RecvData(pcli))
 					{
-						delete _cli_Array[n];
-						_cli_Array.erase(iter);
+						FD_CLR(pcli->GetFd(), &_reads);
+						dropCliArr.push_back(pcli);
+						Close(pcli->GetFd());
 					}
 				}
 			}
+			for (auto pcli : dropCliArr)
+			{
+				_cli_Array.erase(pcli->GetFd());
+				delete pcli;
+			}
+#endif
 		}
 	}
 
@@ -208,6 +230,7 @@ public:
 	// 接收请求包
 	bool RecvData(Client* pcli)
 	{
+		//_pEvent->NetRecv(pcli);
 		int recv_len = recv(pcli->GetFd(), _recv_buf, RECVBUFSIZE, 0);
 		if (recv_len <= 0)
 		{
@@ -260,7 +283,7 @@ public:
 
 
 private:
-	std::vector<Client*> _cli_Array;		// 正式队列
+	std::map<SOCKET, Client*> _cli_Array;		// 正式队列
 	std::vector<Client*> _cli_ArrayBuffer;		// 缓冲队列
 
 	std::mutex _mutex;		
@@ -401,11 +424,9 @@ public:
 	{
 		if (_ser_fd != INVALID_SOCKET)
 		{
+			Close(_ser_fd);
 #ifdef _WIN32 
-			closesocket(_ser_fd);
 			CleanNet();
-#else
-			close(_sockfd);
 #endif
 			printf("服务器<$%d>即将关闭...\n\n", static_cast<int>(_ser_fd));
 			_ser_fd = INVALID_SOCKET;
@@ -472,7 +493,7 @@ public:
 		auto Sec = _Timer.getSecond();
 		if (Sec >= 1.0)// && fabs(Sec - 1.0) >= 1e-6)
 		{
-			printf("<$%lfs内> thread{#%d} recvd cli{#%d} recv packages：[#%.1lf]\n", 
+			printf("<$%lfs内> thread{#%d} recvd cli{#%d}\t packageAmount[#%.1lf]\n", 
 				Sec, (int)_handlerProc_Array.size(), (int)_clientAmount, (int)_packageAmount / Sec);
 			_packageAmount = 0;
 			_Timer.update();
@@ -484,19 +505,19 @@ public:
 	// 客户端加入
 	virtual void NetClientJoin(Client* pcli)
 	{
-		_clientAmount++;
+		//_clientAmount++;
 	}
 
 	// 客户端退出
 	virtual void NetClientQuit(Client* pcli)
 	{
-		_clientAmount--;
+		//_clientAmount--;
 	}
 
 	// 消息处理事件
 	virtual void NetMessageHandle(Client* pcli, DataHeader* header)
 	{
-		++_packageAmount;
+		//++_packageAmount;
 	}
 
 
