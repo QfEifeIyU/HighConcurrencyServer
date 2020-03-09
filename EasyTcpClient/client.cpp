@@ -1,8 +1,6 @@
 ﻿#include "tcpClient.hpp"
 
-
-static bool g_Cli_Running = true;
-const int cli_count = 12;		// 客户端总数
+const int cli_count = 8000;		// 客户端总数
 
 static Login login[10];
 static const size_t size = sizeof(login);
@@ -50,7 +48,7 @@ int main()
 		std::thread thr_Send(thr_SendMsg, n + 1);
 		thr_Send.detach();
 	}
-	while (true)
+	while (g_TaskRuning)
 		;
 	return 0;
 }

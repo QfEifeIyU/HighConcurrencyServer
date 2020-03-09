@@ -42,6 +42,7 @@ public:
 		}
 		//printf("SOCKET<%d>创建成功.\n", static_cast<int>(_sockfd));
 	}
+
 	// 连接服务器
 	void Connect(const char* ip, const unsigned short port)
 	{
@@ -60,24 +61,24 @@ public:
 		{
 			printf("连接服务器失败\n");
 			CleanUp();
+			return;
 		}
-		_isConnect = true;
 		//printf("<$%d>成功连接到服务器<$%s : %d>...\n", static_cast<int>(_sockfd), ip, port);
+		_isConnect = true;
 	}
+
 	// 关闭Socket
 	void CleanUp()
 	{
 		if (_sockfd != INVALID_SOCKET) {
+			Close(_sockfd);
 			// 关闭windows socket 2.x环境
 #ifdef _WIN32 
-			closesocket(_sockfd);
 			CleanNet();
-#else
-			close(_sockfd);
 #endif
 			_sockfd = INVALID_SOCKET;
 			_isConnect = false;
-			printf("正在退出...\n\n");
+			//printf("正在退出...\n\n");
 		}
 	}
 
@@ -104,13 +105,14 @@ public:
 				//here is to do 其余任务
 				//printf(" select 监测到无就绪的描述符.\n");
 			}
+
 			// 3.判断服务端套接字是否就绪
 			if (FD_ISSET(_sockfd, &reads))
 			{
 				FD_CLR(_sockfd, &reads);
 				if (!RecvData(_sockfd))
 				{
-					printf("Proc导致通讯中断...\n");
+					//printf("Proc导致通讯中断...\n");
 					CleanUp();
 					return false;
 				}
@@ -162,7 +164,6 @@ public:
 			}
 			else 
 			{
-				printf("消息缓冲区数据不足一个完整包\n");
 				break;
 			}
 		}
@@ -185,7 +186,6 @@ public:
 			}	break;
 			case _NEWUSER_JOIN:			// 新人到来
 			{
-				/************************************************/
 				NewJoin* broad = reinterpret_cast<NewJoin*>(response);
 				printf("\t有新人到场.->$%d\n", static_cast<int>(broad->_fd));
 			}	break;
