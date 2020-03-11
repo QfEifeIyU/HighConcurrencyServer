@@ -6,18 +6,18 @@
 #include <string.h>
 
 
-class TcpClient
+class EasyTcpClient
 {
 public:
-	TcpClient()
+	EasyTcpClient()
 		:_sockfd(INVALID_SOCKET)
 	{
-		memset(_recv_buf, 0, sizeof(_recv_buf));
+		//memset(_recv_buf, 0, sizeof(_recv_buf));
 		memset(_msg_buf, 0, sizeof(_msg_buf));
 		_endofmsgbf = 0;
 		_isConnect = false;
 	}
-	virtual ~TcpClient()
+	virtual ~EasyTcpClient()
 	{
 		CleanUp();
 		_sockfd = INVALID_SOCKET;
@@ -142,13 +142,14 @@ public:
 	// 响应包接收->分包和拆包
 	bool RecvData(SOCKET ser_fd) 
 	{
-		int recv_len = recv(ser_fd, _recv_buf, RECVBUFSIZE, 0);
+		char* recv_buf = _msg_buf + _endofmsgbf;
+		int recv_len = recv(ser_fd, recv_buf, RECVBUFSIZE- _endofmsgbf, 0);
 		if (recv_len <= 0)
 		{
 			return false;	// 断开连接或未接收到消息
 		}
 
-		memcpy(_msg_buf + _endofmsgbf, _recv_buf, recv_len);
+		//memcpy(_msg_buf + _endofmsgbf, _recv_buf, recv_len);
 		_endofmsgbf += recv_len;
 
 		while (_endofmsgbf >= sizeof(DataHeader))
@@ -202,9 +203,8 @@ public:
 
 private:
 	SOCKET _sockfd;
-	/*使用双缓冲解决tcp粘包问题*/
-	char _recv_buf[RECVBUFSIZE] = {};
-	char _msg_buf[RECVBUFSIZE * 5] = {};
+	/*使用缓冲解决tcp粘包问题*/
+	char _msg_buf[RECVBUFSIZE] = {};
 	int _endofmsgbf = 0;
 
 	bool _isConnect;	// 连接状态

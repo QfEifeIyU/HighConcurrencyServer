@@ -96,4 +96,5 @@ struct NewJoin :public DataHeader
 	}
 	int _fd;
 };
+
 #endif	// end of MessageType

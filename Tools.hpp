@@ -3,7 +3,7 @@
 
 /* 网络模块 */
 #ifdef _WIN32
-	#define FD_SETSIZE	1024
+	#define FD_SETSIZE	2000
 	#define WIN32_LEAN_AND_MEAN			// 避免windows库和WinSock2库的宏重定义
 	#define _WINSOCK_DEPRECATED_NO_WARNINGS			// itoa转换函数版本过低
 	#include <windows.h>
@@ -47,11 +47,21 @@ void SetAddr(sockaddr_in* addr, const char* ip, const unsigned short port)
 #endif
 }
 
+// 为了兼容跨平台时候的 closesocket() 和 close()
+inline void Close(SOCKET fd)
+{
+#ifdef _WIN32
+	closesocket(fd);
+#else
+	close(fd);
+#endif 
+}
 
 /* 2.多线程模块 */
 #include <thread>
 //const int TIME_AWAKE = 1;	// select轮询时间
-const int RECVBUFSIZE = 10240;		// 接收缓冲区大小
+const int RECVBUFSIZE = 10240 * 5;		// 接收缓冲区大小
+const int SENDBUFSIZE = RECVBUFSIZE;	// 接收缓冲区大小
 const int CPU_THREAD_AMOUNT = 4;		// 根据cpu调整创建的线程数量
 
 #include <iostream>
