@@ -17,10 +17,9 @@ public:
 	{
 		if (_pAddr)
 		{
-			dePrint("ObjectPool: free## ->pool = %p, size = %llu, amount = %llu.\n", _pAddr, sizeof(Type), objAmount);
+			dePrint("[%s]: Pool free-> [addr: %llX].\n", typeid(Type).name(), (ptr)_pAddr);
 			delete[] _pAddr;
 		}
-			
 	}
 
 	// 申请对象
@@ -32,11 +31,14 @@ public:
 		if (_header == nullptr)
 		{
 			/* 内存单元无---向系统申请*/
-			dePrint("objectPool is end!\n");
+			//dePrint("objectPool is empty!!!\n");
 			pTake = (NodeHeader*)new char[sizeof(Type) + sizeof(NodeHeader)];
 			pTake->_Id = -1;
 			++pTake->_refCount;
 			pTake->_next = nullptr;
+			
+			//dePrint("\tmalloc [addr: %llX] [id: %d] [size: %llu] from Pool[%llX].\n",
+				//pTake->_Id, allocSize, (ptr)pTake, (ptr)_pAddr);
 		}
 		else
 		{
@@ -44,9 +46,9 @@ public:
 			pTake = _header;
 			_header = _header->_next;
 			++pTake->_refCount;
-		}
-		if (pTake != nullptr)
-			dePrint("\tTake Object[id = %d, size = %llu] from Pool[%p]\n", pTake->_Id, allocSize, this);
+			dePrint("\tTake Object[id: %d, size: %llu, addr: %llX] from Pool[%s].\n",
+				pTake->_Id, allocSize, (ptr)pTake, typeid(Type).name());
+		}			
 		return (char*)pTake + sizeof(NodeHeader);
 	}
 
@@ -54,26 +56,26 @@ public:
 	void ReturnObject(void* pMem)
 	{
 		NodeHeader* pReturn = (NodeHeader*)((char*)pMem - sizeof(NodeHeader));
-		dePrint("\tReturn Object[id = %d] to Pool[%p]\n", pReturn->_Id, this);
 		if (pReturn->_Id != -1)
 		{
-			/* 在内存池中*/
+			/* 在对象池中*/
 			std::lock_guard<std::mutex> lock(static_mutex1);
 			if (--pReturn->_refCount != 0)
 				return;
-
+			dePrint("\tReturn Object[id = %d, addr = %llX] to Pool[%s].\n", pReturn->_Id, (ptr)pReturn, typeid(Type).name());
 			pReturn->_next = _header;
 			_header = pReturn;
 		}
 		else
 		{
-			if (--pReturn->_refCount != 0)
-				return;
+			//MemoryPool::BlockHeader* pReturn = ()
+			//if (--pReturn->_refCount != 0)
+				//return;
 			delete[] pReturn;
 		}
 	}
-private:
 
+private:
 	void InitObjectPool()
 	{
 		if (_pAddr != nullptr)
@@ -83,7 +85,8 @@ private:
 		uint32_t nodeSize = sizeof(Type) + sizeof(NodeHeader);
 		uint32_t poolSize = nodeSize * objAmount;
 		_pAddr = new char[poolSize];
-		dePrint("ObjectPool: alloc## ->pool = %p, size = %llu, amount = %llu.\n", _pAddr, sizeof(Type), objAmount);
+		dePrint("[%s]: Pool alloc-> [addr: %llX] [size: %llu] amount: %llu, Total = %dB.\n",
+			typeid(Type).name(), (ptr)_pAddr, sizeof(Type), objAmount, poolSize);
 
 		// 将内存池的块‘链’起来
 		_header = (NodeHeader*)_pAddr;
@@ -113,6 +116,7 @@ private:
 				curHeader = nextHeader;
 			}
 		}
+		//dePrint("ObjectPool Init done!\n");
 	}
 
 private:
@@ -160,6 +164,8 @@ public:
 
 private:
 	typedef ObjectPool<Type, poolSize> TypePool;
+
+	/* 单例模式--使得整个系统中每个类型都有一个对象池 */
 	static TypePool& ObjectPool()
 	{
 		static TypePool pool;
