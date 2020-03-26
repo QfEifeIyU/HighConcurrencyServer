@@ -5,7 +5,7 @@
 #include "MyNewDelete.h"
 class MemoryPool;
 typedef unsigned __int64 ptr;		// 打印地址
-static std::mutex static_mutex;
+
 
 /* 内存池 */
 class MemoryPool
@@ -23,7 +23,7 @@ public:
 	{
 		if (_pAddr)
 		{
-			dePrint(">>>>>Memory[%4d]Pool free >>>>> [addr: %llX].\n", _bodySize, (ptr)_pAddr);
+			dePrint(">>>>>Memory[%d]: [addr: %llX].\n", _bodySize, (ptr)_pAddr);
 			free(_pAddr);
 		}	
 		
@@ -32,25 +32,25 @@ public:
 	// 分配块
 	void* TakeBlock(size_t allocSize)
 	{
-		std::lock_guard<std::mutex> lock(static_mutex);		// 加锁保证线程安全
+		std::lock_guard<std::mutex> lock(_mutex);		// 加锁保证线程安全
 
 		BlockHeader* pTake = nullptr;
 		if (_header == nullptr)
 		{
-			/* 内存池中可用内存块空了---向系统申请*/
-			//dePrint("Memory[%d]Pool is empty!!!\n", _bodySize);
-			pTake = (BlockHeader*)malloc(allocSize + sizeof(BlockHeader));
+			/* 内存池中可用内存块空了---向更大的内存池申请*/
+			//dePrint("[%d] is empty, and alloc from more.\n", _bodySize);
+			dePrint("Too Big.");
+			return new char[allocSize + _bodySize];
+			/*pTake = (BlockHeader*)malloc(allocSize + sizeof(BlockHeader));
 			if (pTake != nullptr)
 			{
 				pTake->_Id = -1;
 				pTake->_next = nullptr;
 				pTake->_refCount = 1;
 				pTake->_Pool = nullptr;
-				dePrint("\tmalloc [addr: %llX] [id: %d] [size: %llu] from [%llx].\n", 
-					(ptr)pTake, pTake->_Id, allocSize, (ptr)pTake->_Pool);
-				//dePrint("   malloc[id = %d, size = %llu, addr = %llX] from Pool[%llX]\n",
-					//pTake->_Id, allocSize, (ptr)pTake, (ptr)pTake->_Pool);
-			}
+				dePrint("\tTake Block[id: %d, size: %llu, addr: %llX] from Pool[%llx]\n",
+					pTake->_Id, allocSize, (ptr)pTake, (ptr)pTake->_Pool);
+			}*/
 		}
 		else 
 		{
@@ -69,23 +69,27 @@ public:
 	{
 		
 		BlockHeader* pReturn = (BlockHeader*)((char*)pMem - sizeof(BlockHeader));
-		dePrint("\tReturn Block[id: %d, addr: %llX] to Pool[%d]\n", 
-			pReturn->_Id, (ptr)pReturn, _bodySize);
+
 		if (pReturn->_Id != -1)
 		{
 			/* 在内存池中*/
-			std::lock_guard<std::mutex> lock(static_mutex);
+			std::lock_guard<std::mutex> lock(_mutex);
 			if (--pReturn->_refCount != 0)
 				return;
-
+			dePrint("\tReturn Block[id: %d, addr: %llX] to Pool[%d]\n",
+				pReturn->_Id, (ptr)pReturn, _bodySize);
 			pReturn->_next = _header;
 			_header = pReturn;
 		}
 		else
 		{
+			dePrint("errorerrorerrorerrorerrorerrorerror.\n");
+			/* 不在内存池中
 			if (--pReturn->_refCount != 0)
 				return;
-			free(pReturn);
+			dePrint("\tReturn Block[id: %d, addr: %llX] to Pool[%llx]\n",
+				pReturn->_Id, (ptr)pReturn, (ptr)pReturn->_Pool);
+			free(pReturn); */
 		}
 	}
 
@@ -101,7 +105,7 @@ protected:
 		uint32_t blockSize = _bodySize + sizeof(BlockHeader);
 		uint32_t poolSize = blockSize * _blockAmount;
 		_pAddr = malloc(poolSize);
-		dePrint(">>>>>Memory[%4dPool] alloc-> [addr: %llX] amount:%d, Total = %dB.\n", 
+		dePrint(">>>>>Memory[%d]: [addr: %llX] amount:%d, Total = %dB.\n", 
 			_bodySize, (ptr)_pAddr, _blockAmount, poolSize);
 
 		// 将内存池的块‘链’起来
@@ -137,11 +141,12 @@ protected:
 	}
 
 
+
+	/*############## 成员列表 #####################*/
 public:
 	/* 内存池中内存单元的头部信息 */
-	class BlockHeader
+	struct BlockHeader
 	{
-	public:
 		/*int a = sizeof(BlockHeader); // 24; */
 		MemoryPool* _Pool;		// 所属内存池
 		BlockHeader* _next;		// 下一个内存单元的信息
@@ -155,6 +160,7 @@ protected:
 	BlockHeader* _header;	// 内存单元的头部--链表头
 	uint32_t _bodySize;		// 内存单元的大小 - 头部
 	uint32_t _blockAmount;	// 内存单元的数量
+	std::mutex _mutex;
 };
 
 
@@ -177,32 +183,28 @@ public:
 
 /* 进行内存池的申请 */
 const int MAX_ALLOC_SIZE = 256;
-class MemoryManager
+class MemoryManagerTools
 {
-	/* 使用单例模式--构造函数私有化 */
 private:
-	MemoryManager()
+	MemoryManagerTools()
 	{
-		InitArray(0, MAX_ALLOC_SIZE);
-		dePrint("MemoryManager : Alloc Pool ing...\n");
+		InitArray(1, 64, &_mem64);
+		InitArray(65, 128, &_mem128);
+		InitArray(129, 256, &_mem256);
+		//dePrint("MemoryManager : Alloc Pool ing...\n");
 	}
-	~MemoryManager()
+
+	~MemoryManagerTools()
 	{
-		dePrint("MemoryManager : Free Pool ing...\n");
+		//dePrint("MemoryManager : Free Pool ing...\n");
 	}
 
 	// 初始化内存池映射数组
-	void InitArray(int begin, int end)
+	void InitArray(int begin, int end, MemoryPool* pMem)
 	{
-
-		for (int n = begin; n < end; ++n)
+		for (int n = begin; n <= end; ++n)
 		{
-			if (n <= 64)
-				_poolMem[n] = &_mem64;
-			else if (n <= 128)
-				_poolMem[n] = &_mem128;
-			else
-				_poolMem[n] = &_mem256;		// 根据申请的大小，向对应的内存池进行申请
+			_poolMem[n] = pMem;		// 根据申请的大小，向对应的内存池进行申请
 		}
 	}
 
@@ -210,22 +212,22 @@ public:
 	typedef MemoryPool::BlockHeader BlockUnitHeader;		// 内存单元的头指针
 
 	/* 单例模式--使得整个系统中只有一份内存管理类 */
-	static MemoryManager& Instance_Singleton()
+	static MemoryManagerTools* Get_pInstance()
 	{
-		static MemoryManager static_mgr;
-		return static_mgr;
+		return &_Manager;
 	}
 
+	// 申请空间-> 大于allocSize的，向系统申请，否则向对应内存池申请
 	void* allocMemory(size_t allocSize)
 	{
 		if (allocSize <= MAX_ALLOC_SIZE)
 		{
 			// size小于MAX_ALLOC_SIZE，通过poolMem映射到对应内存池中
-			return _poolMem[allocSize - 1]->TakeBlock(allocSize);
+			return _poolMem[allocSize]->TakeBlock(allocSize);
 		}
 		else
 		{
-			// 大于内存池数量，额外申请	
+			// 大于内存池最大申请数量，额外申请	
 			BlockUnitHeader* pTake = (BlockUnitHeader*)malloc(allocSize + sizeof(BlockUnitHeader));
 			if (pTake != nullptr)
 			{
@@ -233,15 +235,14 @@ public:
 				pTake->_refCount = 1;
 				pTake->_Pool = nullptr;
 				pTake->_next = nullptr;
-				dePrint("   malloc [addr: %llX] [id: %d] [size: %llu] from [%llx].\n",
+				dePrint(" malloc [addr: %llX] [id: %d] [size: %llu] from [%llx].\n",
 					(ptr)pTake, pTake->_Id, allocSize, (ptr)pTake->_Pool);
-				//dePrint("\talloc: %llX, id = %d, size = %llu.\n", (ptr)pTake, pTake->_Id, allocSize);
 			}
 			return ((char*)pTake + sizeof(BlockUnitHeader));
 		}
 	}
 
-
+	// 根据内存单元的头部信息，交给内存池/操作系统释放空间
 	void freeMemory(void* pMem)
 	{
 		BlockUnitHeader* pReturn = (BlockUnitHeader*)((char*)pMem - sizeof(BlockUnitHeader));
@@ -255,10 +256,10 @@ public:
 			// 如果不是内存池的内存，因为申请的时候做了单元信息，所以释放BlockUnit类型		
 			if (--pReturn->_refCount == 0)
 			{
-				dePrint("\tfree [addr: %llX] [id: %d] from [%llx].\n",
+				//dePrint("\tReturn Block[id: %d, addr: %llX] to Pool[%llx]\n",
+				//	pReturn->_Id, (ptr)pReturn, (ptr)pReturn->_Pool);
+				dePrint(" free [addr: %llX] [id: %d] to [%llx].\n",
 					(ptr)pReturn, pReturn->_Id, (ptr)pReturn->_Pool);
-				//dePrint("   free: %llX, id = %d, ref = %d.\n", 
-					//(ptr)pReturn, pReturn->_Id, pReturn->_refCount);
 				free(pReturn);
 			}
 		}
@@ -266,14 +267,17 @@ public:
 
 
 private:
-	MemoryPoolAlloctor<64, 10> _mem64;		
+	static MemoryManagerTools _Manager;			// 静态成员MemoryManagerTools对象，程序一开始初始化
+	MemoryPoolAlloctor<64, 100> _mem64;			// 如果使用指针成员，则不会初始化，需要手动进行初始化
 	MemoryPoolAlloctor<128, 100> _mem128;	
 	MemoryPoolAlloctor<256, 100> _mem256;	
 	//MemoryPoolAlloctor<512, 100000> _mem512;
 	//MemoryPoolAlloctor<1024, 100000> _mem102
 	//MemoryPoolAlloctor<1024, 1000> _mem64;	
-	MemoryPool* _poolMem[MAX_ALLOC_SIZE];		// 映射数组
+	MemoryPool* _poolMem[MAX_ALLOC_SIZE + 1];		// 映射数组
+
 };
+//int a = sizeof(MemoryPoolAlloctor<6,19>);
 
 
 

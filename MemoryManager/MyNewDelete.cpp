@@ -16,23 +16,23 @@
 
 void* operator new(size_t allocSize)
 {
-	return MemoryManager::Instance_Singleton().allocMemory(allocSize);
+	return MemoryManagerTools::Get_pInstance()->allocMemory(allocSize);
 }
 
 
 void* operator new[](size_t allocSize)
 {
-	return MemoryManager::Instance_Singleton().allocMemory(allocSize);
+	return MemoryManagerTools::Get_pInstance()->allocMemory(allocSize);
 }
 
 
 void operator delete(void* pMem)
 {
-	MemoryManager::Instance_Singleton().freeMemory(pMem);
+	MemoryManagerTools::Get_pInstance()->freeMemory(pMem);
 }
 
 
 void operator delete[](void* pMem)
 {
-	MemoryManager::Instance_Singleton().freeMemory(pMem);
+	MemoryManagerTools::Get_pInstance()->freeMemory(pMem);
 }
